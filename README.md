@@ -1,61 +1,68 @@
-# Agent Loop Knowledge Base MVP
+# Agent Loop 知识库 MVP
 
-Day 1 focuses on the project foundation and document ingestion MVP:
+Day 1 主要完成项目基础结构和文档导入 MVP：
 
-- FastAPI backend with document upload, hash deduplication, parsing status, and extracted text preview.
-- Vue 3 frontend for upload, document list, status, metadata, and extracted text.
-- PostgreSQL with pgvector extension, Redis, backend, frontend, and worker in Docker Compose.
-- A lightweight worker placeholder so the Day 2 async embedding job has a home.
+- FastAPI 后端：支持文档上传、哈希去重、解析状态和提取文本预览。
+- Vue 3 前端：支持上传、文档列表、状态展示、元数据和提取文本查看。
+- Docker Compose 中包含 PostgreSQL、pgvector 扩展、Redis、后端、前端和 worker。
+- 预留轻量级 worker，为 Day 2 的异步 embedding 任务做准备。
 
-## Run
+## 运行
 
-Copy the example environment file if you want to override defaults:
+如果需要覆盖默认配置，可以复制示例环境变量文件：
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Start the stack:
+启动完整服务：
 
 ```powershell
 docker compose up --build
 ```
 
-Open:
+访问地址：
 
-- Frontend: http://localhost:5173
-- Backend health: http://localhost:8000/api/health
-- Backend docs: http://localhost:8000/docs
+- 前端：http://localhost:5173
+- 后端健康检查：http://localhost:8000/api/health
+- 后端接口文档：http://localhost:8000/docs
 
-## Local Backend Fallback
+## 本地运行后端
 
-If Docker is temporarily unavailable, the backend can use local SQLite for Day 1 parsing:
+后端要求使用 PostgreSQL。直接在宿主机运行后端时，需要通过宿主机映射端口连接 Docker 里的 PostgreSQL 容器：
 
 ```powershell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+$env:DATABASE_URL = "postgresql+psycopg://agent_loop:agent_loop@127.0.0.1:15432/agent_loop"
 uvicorn app.main:app --reload
 ```
 
-The SQLite database and uploaded files will be written under `backend/storage/`.
+上传文件会写入 `backend/storage/`。
 
-## Day 1 Acceptance
+在 Docker Compose 内部，backend 和 worker 使用 `postgres:5432` 连接数据库。其中 `postgres` 是 Compose 网络里的 PostgreSQL 服务名，`5432` 是容器内部端口。
 
-Upload one file of each type:
+从宿主机访问数据库时，例如 DataGrip 或本地直接运行 `uvicorn`，使用 `127.0.0.1:15432`。这里的 `15432` 是发布到宿主机的端口，对应容器内部的 `5432`。
+
+## Day 1 验收
+
+分别上传以下类型的文件：
 
 - PDF
 - DOCX
 - Markdown
 - HTML
 
-Expected result:
+预期结果：
 
-- The document list shows parsing status.
-- Duplicate uploads are detected by SHA-256 hash.
-- Selecting a document shows extracted text, parser metadata, and error details if parsing failed.
+- 文档列表能显示解析状态。
+- 重复上传会通过 SHA-256 哈希识别。
+- 选中文档后，可以查看提取文本、解析元数据，以及解析失败时的错误信息。
 
-## Docker Note On Windows
+## Windows 下的 Docker 说明
 
-If `docker info` shows `permission denied while trying to connect to ... docker_engine`, start Docker Desktop and reopen the terminal. If it still fails, add the current Windows user to the `docker-users` group or run the terminal with the required Docker permission.
+如果执行 `docker info` 时出现 `permission denied while trying to connect to ... docker_engine`，先启动 Docker Desktop，然后重新打开终端。
+
+如果问题仍然存在，可以把当前 Windows 用户加入 `docker-users` 用户组，或者使用具备 Docker 权限的终端运行命令。
