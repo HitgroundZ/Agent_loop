@@ -1,3 +1,7 @@
+"""
+文件处理相关路由：
+文件上传、获取文件列表、获取某个文件、删除某个文件、获取切片片段
+"""
 from hashlib import sha256
 from pathlib import Path
 
@@ -13,7 +17,7 @@ from app.services.parsers import SUPPORTED_EXTENSIONS, parse_file
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
-
+# 上传文档接口
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -21,11 +25,11 @@ async def upload_document(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> JSONResponse:
-    cached = _get_idempotent_response(db, idempotency_key, "documents.upload")
+    cached = _get_idempotent_response(db, idempotency_key, "documents.upload")              # 查看数据库操作是否之前已经执行过了文件上传
     if cached:
         return cached
 
-    ext = Path(file.filename or "").suffix.lower()
+    ext = Path(file.filename or "").suffix.lower()                                          # 查看文件格式是否支持
     if ext not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -35,45 +39,45 @@ async def upload_document(
             },
         )
 
-    content = await file.read()
-    if len(content) > settings.max_upload_bytes:
+    content = await file.read()                                                             # 文件上传是异步的，那读取就要用 await
+    if len(content) > settings.max_upload_bytes:                                            # 防止用户上传过大的文件
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File is larger than {settings.max_upload_bytes} bytes",
         )
 
-    source_hash = sha256(content).hexdigest()
-    existing = db.scalar(select(Document).where(Document.source_hash == source_hash))
+    source_hash = sha256(content).hexdigest()                                               # 计算文档的哈希值，防止用户重复上传相同文件
+    existing = db.scalar(select(Document).where(Document.source_hash == source_hash))       # db.scalar 返回查询结果中的第一个对象
     if existing:
         payload = _document_payload(existing, include_text=True)
         payload["duplicate"] = True
         return _store_and_return(db, idempotency_key, "documents.upload", payload, status.HTTP_200_OK)
 
-    storage_path = settings.upload_path / f"{source_hash}{ext}"
+    storage_path = settings.upload_path / f"{source_hash}{ext}"                             # 以哈希名的方式在本地存储文件，防止名字泄露
     storage_path.write_bytes(content)
 
     document = Document(
         filename=file.filename or storage_path.name,
-        content_type=file.content_type or "application/octet-stream",
+        content_type=file.content_type or "application/octet-stream",                       # 文件的 MIME 类型
         file_ext=ext,
         source_hash=source_hash,
         size_bytes=len(content),
         status="parsing",
-        metadata_json={},
+        metadata_json={},                                                                   # 文档解析的状态
     )
-    db.add(document)
+    db.add(document)                                                                        # 上传 document 到数据库
     db.commit()
     db.refresh(document)
 
     try:
-        parsed = parse_file(storage_path, ext)
+        parsed = parse_file(storage_path, ext)                                              # 如何解析文档的
         document.status = "completed"
-        document.parser_name = parsed.parser_name
-        document.extracted_text = parsed.text
+        document.parser_name = parsed.parser_name                                           # 数据库中同步更新解析的方式等信息
+        document.extracted_text = parsed.text                                               # 完整文档内容
         document.text_preview = parsed.text[:2000]
         document.metadata_json = parsed.metadata
-        document.error_message = None
-        db.add(
+        document.error_message = None                                                       # 此时是上传成功的状态
+        db.add(                                                                             # 创建文档版本数据表 (document_version)
             DocumentVersion(
                 document_id=document.id,
                 version_no=1,
@@ -83,8 +87,8 @@ async def upload_document(
                 metadata_json=parsed.metadata,
             )
         )
-    except Exception as exc:  # noqa: BLE001
-        document.status = "failed"
+    except Exception as exc:
+        document.status = "failed"                                                          # 上传失败
         document.error_message = str(exc)
         document.text_preview = ""
         document.metadata_json = {"parser_error": str(exc)}
