@@ -1,9 +1,11 @@
 """
 文件处理相关路由：
-文件上传、获取文件列表、获取某个文件、删除某个文件、获取切片片段
+文件上传、获取文件列表、获取某个文件、删除某个文件、获取切片片段。
 """
+from collections import Counter
 from hashlib import sha256
 from pathlib import Path
+import tempfile
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
@@ -12,12 +14,22 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.database import get_db
-from app.models import Document, DocumentVersion, IdempotencyRecord
+from app.models import (
+    Document,
+    DocumentChunk,
+    DocumentVersion,
+    IdempotencyRecord,
+    new_id,
+)
+from app.services.chunking import build_chunks
+from app.services.embedding_jobs import ensure_embedding_job, enqueue_embedding_job
 from app.services.parsers import SUPPORTED_EXTENSIONS, parse_file
+from app.services.storage import get_object_storage
+
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
-# 上传文档接口
+
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -25,11 +37,11 @@ async def upload_document(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> JSONResponse:
-    cached = _get_idempotent_response(db, idempotency_key, "documents.upload")              # 查看数据库操作是否之前已经执行过了文件上传
+    cached = _get_idempotent_response(db, idempotency_key, "documents.upload")
     if cached:
         return cached
 
-    ext = Path(file.filename or "").suffix.lower()                                          # 查看文件格式是否支持
+    ext = Path(file.filename or "").suffix.lower()
     if ext not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -39,64 +51,128 @@ async def upload_document(
             },
         )
 
-    content = await file.read()                                                             # 文件上传是异步的，那读取就要用 await
-    if len(content) > settings.max_upload_bytes:                                            # 防止用户上传过大的文件
+    content = await file.read()
+    if len(content) > settings.max_upload_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File is larger than {settings.max_upload_bytes} bytes",
         )
 
-    source_hash = sha256(content).hexdigest()                                               # 计算文档的哈希值，防止用户重复上传相同文件
-    existing = db.scalar(select(Document).where(Document.source_hash == source_hash))       # db.scalar 返回查询结果中的第一个对象
+    source_hash = sha256(content).hexdigest()
+    existing = db.scalar(select(Document).where(Document.source_hash == source_hash))
     if existing:
-        payload = _document_payload(existing, include_text=True)
-        payload["duplicate"] = True
-        return _store_and_return(db, idempotency_key, "documents.upload", payload, status.HTTP_200_OK)
+        if _is_legacy_unindexed_document(existing):
+            db.delete(existing)
+            db.commit()
+        else:
+            payload = _document_payload(existing)
+            payload["duplicate"] = True
+            return _store_and_return(db, idempotency_key, "documents.upload", payload, status.HTTP_200_OK)
 
-    storage_path = settings.upload_path / f"{source_hash}{ext}"                             # 以哈希名的方式在本地存储文件，防止名字泄露
-    storage_path.write_bytes(content)
-
+    source_object_key = f"documents/{source_hash}/source{ext}"
     document = Document(
-        filename=file.filename or storage_path.name,
-        content_type=file.content_type or "application/octet-stream",                       # 文件的 MIME 类型
+        filename=file.filename or f"{source_hash}{ext}",
+        content_type=file.content_type or "application/octet-stream",
         file_ext=ext,
         source_hash=source_hash,
         size_bytes=len(content),
         status="parsing",
-        metadata_json={},                                                                   # 文档解析的状态
+        metadata_json={},
     )
-    db.add(document)                                                                        # 上传 document 到数据库
+    db.add(document)
     db.commit()
     db.refresh(document)
 
+    storage = get_object_storage(settings)
+    should_enqueue = False
+    job_id: str | None = None
+    temp_path: Path | None = None
+    uploaded_object_keys: list[str] = []
+
     try:
-        parsed = parse_file(storage_path, ext)                                              # 如何解析文档的
-        document.status = "completed"
-        document.parser_name = parsed.parser_name                                           # 数据库中同步更新解析的方式等信息
-        document.extracted_text = parsed.text                                               # 完整文档内容
+        storage.put_bytes(source_object_key, content, document.content_type)
+        uploaded_object_keys.append(source_object_key)
+        temp_path = _write_temp_file(content, ext)
+        parsed = parse_file(temp_path, ext)
+
+        version = DocumentVersion(
+            id=new_id(),
+            document_id=document.id,
+            version_no=1,
+            source_hash=source_hash,
+            source_object_key=source_object_key,
+            extracted_text_object_key=None,
+            extracted_chars=len(parsed.text),
+            metadata_json={},
+        )
+        version.extracted_text_object_key = (
+            f"documents/{document.id}/versions/{version.id}/extracted.txt"
+        )
+        storage.put_text(version.extracted_text_object_key, parsed.text)
+        uploaded_object_keys.append(version.extracted_text_object_key)
+
+        document.parser_name = parsed.parser_name
         document.text_preview = parsed.text[:2000]
         document.metadata_json = parsed.metadata
-        document.error_message = None                                                       # 此时是上传成功的状态
-        db.add(                                                                             # 创建文档版本数据表 (document_version)
-            DocumentVersion(
-                document_id=document.id,
-                version_no=1,
-                source_hash=source_hash,
-                storage_path=str(storage_path),
-                extracted_chars=len(parsed.text),
-                metadata_json=parsed.metadata,
-            )
+        document.error_message = None
+        document.status = "chunked"
+        version.metadata_json = {
+            **parsed.metadata,
+            "object_keys": {
+                "source": source_object_key,
+                "extracted_text": version.extracted_text_object_key,
+            },
+        }
+        db.add(version)
+        db.flush()
+
+        chunks = build_chunks(
+            parsed.text,
+            parsed.metadata,
+            max_chars=settings.chunk_max_chars,
+            overlap_chars=settings.chunk_overlap_chars,
         )
+        for chunk_index, chunk in enumerate(chunks):
+            db.add(
+                DocumentChunk(
+                    document_id=document.id,
+                    version_id=version.id,
+                    chunk_index=chunk_index,
+                    page=chunk.page,
+                    heading=chunk.heading,
+                    source_hash=source_hash,
+                    text=chunk.text,
+                    metadata_json=chunk.metadata,
+                    embedding_status="pending",
+                )
+            )
+
+        if chunks:
+            job, should_enqueue = ensure_embedding_job(db, document, version, settings)
+            job_id = job.id
+            document.status = "embedding"
+        else:
+            document.status = "completed"
+
+        db.commit()
     except Exception as exc:
-        document.status = "failed"                                                          # 上传失败
+        db.rollback()
+        document = db.get(Document, document.id)
+        document.status = "failed"
         document.error_message = str(exc)
         document.text_preview = ""
         document.metadata_json = {"parser_error": str(exc)}
+        db.commit()
+        storage.delete_many(uploaded_object_keys)
+    finally:
+        if temp_path:
+            temp_path.unlink(missing_ok=True)
 
-    db.commit()
+    if should_enqueue and job_id:
+        enqueue_embedding_job(settings, job_id)
+
     db.refresh(document)
-
-    payload = _document_payload(document, include_text=True)
+    payload = _document_payload(document)
     payload["duplicate"] = False
     return _store_and_return(db, idempotency_key, "documents.upload", payload, status.HTTP_201_CREATED)
 
@@ -104,7 +180,7 @@ async def upload_document(
 @router.get("")
 def list_documents(db: Session = Depends(get_db)) -> dict:
     documents = db.scalars(select(Document).order_by(desc(Document.created_at))).all()
-    return {"items": [_document_payload(document, include_text=False) for document in documents]}
+    return {"items": [_document_payload(document) for document in documents]}
 
 
 @router.get("/{document_id}")
@@ -112,7 +188,7 @@ def get_document(document_id: str, db: Session = Depends(get_db)) -> dict:
     document = db.get(Document, document_id)
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    return _document_payload(document, include_text=True)
+    return _document_payload(document)
 
 
 @router.get("/{document_id}/chunks")
@@ -120,10 +196,45 @@ def list_document_chunks(document_id: str, db: Session = Depends(get_db)) -> dic
     document = db.get(Document, document_id)
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    chunks = db.scalars(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document.id)
+        .order_by(DocumentChunk.chunk_index)
+    ).all()
     return {
         "document_id": document.id,
-        "items": [],
-        "message": "Chunking starts on Day 2; Day 1 stores the extracted full text only.",
+        "version_id": _latest_version(document).id if _latest_version(document) else None,
+        "items": [_chunk_payload(chunk) for chunk in chunks],
+    }
+
+
+@router.post("/{document_id}/embedding-jobs")
+def retry_embedding_job(
+    document_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    document = db.get(Document, document_id)
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    version = _latest_version(document)
+    if not version:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Document has no parsed version")
+    if not document.chunks:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Document has no chunks")
+
+    job, should_enqueue = ensure_embedding_job(db, document, version, settings, retry_failed=True)
+    if should_enqueue:
+        document.status = "embedding"
+    db.commit()
+
+    enqueued = enqueue_embedding_job(settings, job.id) if should_enqueue else False
+    return {
+        "job": _embedding_job_payload(job),
+        "enqueued": enqueued,
+        "created_or_reset": should_enqueue,
     }
 
 
@@ -132,6 +243,7 @@ def delete_document(
     document_id: str,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> JSONResponse:
     cached = _get_idempotent_response(db, idempotency_key, "documents.delete")
     if cached:
@@ -141,22 +253,27 @@ def delete_document(
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    storage_paths = [version.storage_path for version in document.versions]
+    object_keys = []
+    for version in document.versions:
+        if version.source_object_key:
+            object_keys.append(version.source_object_key)
+        if version.extracted_text_object_key:
+            object_keys.append(version.extracted_text_object_key)
+
     payload = {"deleted": True, "document_id": document.id}
     db.delete(document)
     db.commit()
-
-    for storage_path in storage_paths:
-        try:
-            Path(storage_path).unlink(missing_ok=True)
-        except OSError:
-            pass
+    get_object_storage(settings).delete_many(object_keys)
 
     return _store_and_return(db, idempotency_key, "documents.delete", payload, status.HTTP_200_OK)
 
 
-def _document_payload(document: Document, include_text: bool) -> dict:
-    payload = {
+def _document_payload(document: Document) -> dict:
+    chunks = list(document.chunks)
+    summary = Counter(chunk.embedding_status for chunk in chunks)
+    latest_version = _latest_version(document)
+    latest_job = _latest_embedding_job(document)
+    return {
         "id": document.id,
         "filename": document.filename,
         "content_type": document.content_type,
@@ -168,12 +285,78 @@ def _document_payload(document: Document, include_text: bool) -> dict:
         "error_message": document.error_message,
         "text_preview": document.text_preview or "",
         "metadata": document.metadata_json or {},
+        "chunk_count": len(chunks),
+        "embedding_summary": dict(summary),
+        "current_version_id": latest_version.id if latest_version else None,
+        "embedding_job": _embedding_job_payload(latest_job) if latest_job else None,
         "created_at": document.created_at.isoformat() if document.created_at else None,
         "updated_at": document.updated_at.isoformat() if document.updated_at else None,
     }
-    if include_text:
-        payload["extracted_text"] = document.extracted_text or ""
-    return payload
+
+
+def _chunk_payload(chunk: DocumentChunk) -> dict:
+    return {
+        "id": chunk.id,
+        "document_id": chunk.document_id,
+        "version_id": chunk.version_id,
+        "chunk_index": chunk.chunk_index,
+        "page": chunk.page,
+        "heading": chunk.heading,
+        "source_hash": chunk.source_hash,
+        "text": chunk.text,
+        "metadata": chunk.metadata_json or {},
+        "embedding": {
+            "status": chunk.embedding_status,
+            "model": chunk.embedding_model,
+            "dim": chunk.embedding_dim,
+            "has_vector": chunk.embedding is not None,
+            "error_message": chunk.error_message,
+        },
+        "created_at": chunk.created_at.isoformat() if chunk.created_at else None,
+        "updated_at": chunk.updated_at.isoformat() if chunk.updated_at else None,
+    }
+
+
+def _embedding_job_payload(job) -> dict:
+    return {
+        "id": job.id,
+        "status": job.status,
+        "attempts": job.attempts,
+        "max_attempts": job.max_attempts,
+        "embedding_model": job.embedding_model,
+        "embedding_dim": job.embedding_dim,
+        "last_error": job.last_error,
+        "next_run_at": job.next_run_at.isoformat() if job.next_run_at else None,
+        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+    }
+
+
+def _latest_version(document: Document) -> DocumentVersion | None:
+    if not document.versions:
+        return None
+    return max(document.versions, key=lambda version: version.version_no)
+
+
+def _latest_embedding_job(document: Document):
+    if not document.embedding_jobs:
+        return None
+    return max(document.embedding_jobs, key=lambda job: job.created_at)
+
+
+def _is_legacy_unindexed_document(document: Document) -> bool:
+    latest_version = _latest_version(document)
+    return (
+        not document.chunks
+        and latest_version is not None
+        and latest_version.source_object_key is None
+        and latest_version.extracted_text_object_key is None
+    )
+
+
+def _write_temp_file(content: bytes, ext: str) -> Path:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
+        temp_file.write(content)
+        return Path(temp_file.name)
 
 
 def _get_idempotent_response(db: Session, key: str | None, scope: str) -> JSONResponse | None:
@@ -208,4 +391,3 @@ def _store_and_return(
         )
         db.commit()
     return JSONResponse(status_code=status_code, content=payload)
-

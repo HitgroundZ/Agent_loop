@@ -86,20 +86,28 @@ button:disabled {
 }
 
 .health.ok,
-.status.completed {
+.status.completed,
+.status.indexed,
+.status.embedded {
   color: #12613a;
   background: #dff5e8;
 }
 
 .health.error,
-.status.failed {
+.status.failed,
+.status.embedding_failed {
   color: #9a2c2c;
   background: #ffe1df;
 }
 
 .health.checking,
 .status.parsing,
-.status.uploaded {
+.status.uploaded,
+.status.chunked,
+.status.embedding,
+.status.pending,
+.status.queued,
+.status.running {
   color: #7a4b00;
   background: #fff1cc;
 }
@@ -140,26 +148,34 @@ button:disabled {
 }
 
 .primary,
+.secondary,
 .danger {
   min-height: 42px;
   border: 0;
   border-radius: 6px;
   padding: 0 16px;
-  color: white;
   font-weight: 700;
 }
 
 .primary {
+  color: white;
   background: #1b6f7a;
 }
 
+.secondary {
+  color: #1b4c58;
+  border: 1px solid #b5c8d0;
+  background: #eefafa;
+}
+
 .danger {
+  color: white;
   background: #b04435;
 }
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
 }
 
@@ -231,6 +247,7 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .empty {
@@ -257,6 +274,12 @@ button:disabled {
 .detail-header {
   padding-bottom: 16px;
   border-bottom: 1px solid #d9e0e7;
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
 }
 
 .detail-header h2 {
@@ -303,6 +326,14 @@ dd {
   margin: 0;
 }
 
+.summary-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: #324255;
+  font-size: 13px;
+}
+
 .hash {
   overflow-wrap: anywhere;
   font-family: "SFMono-Regular", Consolas, monospace;
@@ -321,12 +352,69 @@ pre {
 }
 
 .text-panel pre {
-  min-height: 360px;
-  max-height: 62vh;
+  min-height: 160px;
+  max-height: 280px;
 }
 
 .error-panel {
   border-color: #ffc4bf;
+}
+
+.chunk-panel {
+  overflow: hidden;
+}
+
+.chunk-row {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-top: 1px solid #dce3ea;
+}
+
+.chunk-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chunk-header div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.chunk-header strong {
+  font-size: 14px;
+}
+
+.chunk-header span:not(.status),
+.chunk-meta {
+  color: #607083;
+  font-size: 12px;
+}
+
+.chunk-text,
+.chunk-json {
+  padding: 12px;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.chunk-text {
+  max-height: 240px;
+}
+
+.chunk-json {
+  max-height: 150px;
+}
+
+.chunk-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .placeholder {
@@ -368,13 +456,18 @@ pre {
   }
 
   .brand,
-  .detail-header {
+  .detail-header,
+  .header-actions {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .danger {
+  .danger,
+  .secondary {
     width: 100%;
   }
-}
 
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

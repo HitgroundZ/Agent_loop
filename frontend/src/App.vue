@@ -1,20 +1,42 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 const documents = ref([])
 const selectedDocument = ref(null)
+const selectedChunks = ref([])
 const selectedFile = ref(null)
 const loading = ref(false)
+const chunksLoading = ref(false)
 const uploading = ref(false)
 const deleting = ref(false)
+const retrying = ref(false)
 const errorMessage = ref('')
 const health = ref('checking')
 
-const completedCount = computed(() => documents.value.filter((item) => item.status === 'completed').length)
-const failedCount = computed(() => documents.value.filter((item) => item.status === 'failed').length)
+let pollingTimer = null
+
+const indexedCount = computed(() => documents.value.filter((item) => item.status === 'indexed').length)
+const processingCount = computed(() =>
+  documents.value.filter((item) => ['parsing', 'chunked', 'embedding'].includes(item.status)).length
+)
+const failedCount = computed(() =>
+  documents.value.filter((item) => ['failed', 'embedding_failed'].includes(item.status)).length
+)
+const selectedEmbeddingSummary = computed(() => selectedDocument.value?.embedding_summary || {})
+const selectedHasFailedEmbedding = computed(() =>
+  selectedChunks.value.some((chunk) => chunk.embedding?.status === 'failed') ||
+  selectedDocument.value?.status === 'embedding_failed'
+)
 
 onMounted(async () => {
   await Promise.all([checkHealth(), fetchDocuments()])
+  pollingTimer = window.setInterval(refreshActiveWork, 3000)
+})
+
+onUnmounted(() => {
+  if (pollingTimer) {
+    window.clearInterval(pollingTimer)
+  }
 })
 
 async function checkHealth() {
@@ -38,6 +60,11 @@ async function fetchDocuments() {
     documents.value = data.items || []
     if (!selectedDocument.value && documents.value.length > 0) {
       await openDocument(documents.value[0].id)
+    } else if (selectedDocument.value) {
+      const refreshed = documents.value.find((item) => item.id === selectedDocument.value.id)
+      if (refreshed) {
+        selectedDocument.value = { ...selectedDocument.value, ...refreshed }
+      }
     }
   } catch (error) {
     errorMessage.value = error.message
@@ -93,8 +120,47 @@ async function openDocument(id) {
       throw new Error('文档详情加载失败')
     }
     selectedDocument.value = await response.json()
+    await fetchChunks(id)
   } catch (error) {
     errorMessage.value = error.message
+  }
+}
+
+async function fetchChunks(id) {
+  chunksLoading.value = true
+  try {
+    const response = await fetch(`/api/documents/${id}/chunks`)
+    if (!response.ok) {
+      throw new Error('chunk 加载失败')
+    }
+    const data = await response.json()
+    selectedChunks.value = data.items || []
+  } catch (error) {
+    errorMessage.value = error.message
+  } finally {
+    chunksLoading.value = false
+  }
+}
+
+async function retryEmbedding() {
+  if (!selectedDocument.value) return
+  retrying.value = true
+  errorMessage.value = ''
+
+  try {
+    const response = await fetch(`/api/documents/${selectedDocument.value.id}/embedding-jobs`, {
+      method: 'POST'
+    })
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.detail || '重试失败')
+    }
+    await openDocument(selectedDocument.value.id)
+    await fetchDocuments()
+  } catch (error) {
+    errorMessage.value = error.message
+  } finally {
+    retrying.value = false
   }
 }
 
@@ -114,12 +180,33 @@ async function deleteSelected() {
       throw new Error('删除失败')
     }
     selectedDocument.value = null
+    selectedChunks.value = []
     await fetchDocuments()
   } catch (error) {
     errorMessage.value = error.message
   } finally {
     deleting.value = false
   }
+}
+
+async function refreshActiveWork() {
+  if (uploading.value || deleting.value || retrying.value) return
+  const hasActiveDocument = documents.value.some((item) => shouldPoll(item))
+  const selectedNeedsRefresh = selectedDocument.value && shouldPoll(selectedDocument.value)
+  if (!hasActiveDocument && !selectedNeedsRefresh) return
+
+  await fetchDocuments()
+  if (selectedDocument.value && shouldPoll(selectedDocument.value)) {
+    await openDocument(selectedDocument.value.id)
+  }
+}
+
+function shouldPoll(documentItem) {
+  const jobStatus = documentItem.embedding_job?.status
+  return (
+    ['parsing', 'chunked', 'embedding'].includes(documentItem.status) ||
+    ['pending', 'queued', 'running'].includes(jobStatus)
+  )
 }
 
 function makeIdempotencyKey() {
@@ -133,8 +220,16 @@ function statusLabel(status) {
   const labels = {
     uploaded: '已上传',
     parsing: '解析中',
-    completed: '已完成',
-    failed: '失败'
+    chunked: '已切片',
+    embedding: '向量化中',
+    completed: '已解析',
+    indexed: '已入库',
+    failed: '失败',
+    embedding_failed: '向量化失败',
+    pending: '等待中',
+    queued: '排队中',
+    running: '运行中',
+    embedded: '已向量化'
   }
   return labels[status] || status
 }
@@ -162,7 +257,7 @@ function formatDate(value) {
     <aside class="sidebar">
       <div class="brand">
         <div>
-          <p class="eyebrow">Day 1</p>
+          <p class="eyebrow">Day 2</p>
           <h1>知识库</h1>
         </div>
         <span class="health" :class="health">{{ health }}</span>
@@ -189,8 +284,12 @@ function formatDate(value) {
           <span>文档</span>
         </div>
         <div>
-          <strong>{{ completedCount }}</strong>
-          <span>完成</span>
+          <strong>{{ indexedCount }}</strong>
+          <span>入库</span>
+        </div>
+        <div>
+          <strong>{{ processingCount }}</strong>
+          <span>处理中</span>
         </div>
         <div>
           <strong>{{ failedCount }}</strong>
@@ -211,6 +310,7 @@ function formatDate(value) {
           <span class="filename">{{ item.filename }}</span>
           <span class="row-meta">
             <span class="status" :class="item.status">{{ statusLabel(item.status) }}</span>
+            <span>{{ item.chunk_count || 0 }} chunks</span>
             <span>{{ formatBytes(item.size_bytes) }}</span>
           </span>
         </button>
@@ -228,9 +328,19 @@ function formatDate(value) {
               {{ selectedDocument.parser_name || '未解析' }} · {{ formatDate(selectedDocument.created_at) }}
             </p>
           </div>
-          <button class="danger" :disabled="deleting" @click="deleteSelected">
-            {{ deleting ? '删除中' : '删除' }}
-          </button>
+          <div class="header-actions">
+            <button
+              v-if="selectedHasFailedEmbedding"
+              class="secondary"
+              :disabled="retrying"
+              @click="retryEmbedding"
+            >
+              {{ retrying ? '重试中' : '重试向量化' }}
+            </button>
+            <button class="danger" :disabled="deleting" @click="deleteSelected">
+              {{ deleting ? '删除中' : '删除' }}
+            </button>
+          </div>
         </header>
 
         <div class="detail-grid">
@@ -238,16 +348,25 @@ function formatDate(value) {
             <h3>状态</h3>
             <dl>
               <div>
-                <dt>解析状态</dt>
+                <dt>文档状态</dt>
                 <dd><span class="status" :class="selectedDocument.status">{{ statusLabel(selectedDocument.status) }}</span></dd>
+              </div>
+              <div>
+                <dt>Chunk 数量</dt>
+                <dd>{{ selectedDocument.chunk_count || 0 }}</dd>
+              </div>
+              <div>
+                <dt>向量状态</dt>
+                <dd class="summary-line">
+                  <span>已完成 {{ selectedEmbeddingSummary.embedded || 0 }}</span>
+                  <span>处理中 {{ selectedEmbeddingSummary.embedding || 0 }}</span>
+                  <span>等待 {{ selectedEmbeddingSummary.pending || 0 }}</span>
+                  <span>失败 {{ selectedEmbeddingSummary.failed || 0 }}</span>
+                </dd>
               </div>
               <div>
                 <dt>SHA-256</dt>
                 <dd class="hash">{{ selectedDocument.source_hash }}</dd>
-              </div>
-              <div>
-                <dt>大小</dt>
-                <dd>{{ formatBytes(selectedDocument.size_bytes) }}</dd>
               </div>
             </dl>
           </section>
@@ -264,8 +383,35 @@ function formatDate(value) {
         </section>
 
         <section class="panel text-panel">
-          <h3>抽取文本</h3>
-          <pre>{{ selectedDocument.extracted_text || selectedDocument.text_preview || '无文本' }}</pre>
+          <h3>文本预览</h3>
+          <pre>{{ selectedDocument.text_preview || '无文本' }}</pre>
+        </section>
+
+        <section class="panel chunk-panel">
+          <h3>Chunks</h3>
+          <div v-if="chunksLoading" class="empty">加载 chunk 中</div>
+          <div v-else-if="selectedChunks.length === 0" class="empty">暂无 chunk</div>
+          <template v-else>
+            <article v-for="chunk in selectedChunks" :key="chunk.id" class="chunk-row">
+              <header class="chunk-header">
+                <div>
+                  <strong>Chunk {{ chunk.chunk_index + 1 }}</strong>
+                  <span v-if="chunk.page">Page {{ chunk.page }}</span>
+                  <span v-if="chunk.heading">{{ chunk.heading }}</span>
+                </div>
+                <span class="status" :class="chunk.embedding.status">
+                  {{ statusLabel(chunk.embedding.status) }}
+                </span>
+              </header>
+              <pre class="chunk-text">{{ chunk.text }}</pre>
+              <div class="chunk-meta">
+                <span>{{ chunk.embedding.model || '未生成模型' }}</span>
+                <span>{{ chunk.embedding.dim || '-' }} dim</span>
+                <span>{{ chunk.embedding.has_vector ? 'vector ready' : 'no vector' }}</span>
+              </div>
+              <pre class="chunk-json">{{ JSON.stringify(chunk.metadata, null, 2) }}</pre>
+            </article>
+          </template>
         </section>
       </div>
 
@@ -276,4 +422,3 @@ function formatDate(value) {
     </section>
   </main>
 </template>
-
