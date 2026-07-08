@@ -18,7 +18,7 @@ Copy-Item .env.example .env
 在 `.env` 中配置百炼 API Key：
 
 ```text
-DASHSCOPE_API_KEY=sk-...
+DASHSCOPE_API_KEY=sk-ff93e976fa334cbf8d13d794a7b665d6
 ```
 
 启动完整服务：
