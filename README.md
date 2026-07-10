@@ -1,11 +1,11 @@
 # Agent Loop 知识库 MVP
 
-当前版本完成到 Day 2：文档上传后会写入 MinIO、解析文本、自动切 chunk、创建 embedding job，并由 worker 异步调用千问向量模型写入 PostgreSQL pgvector。
+当前版本完成到 Day 3：文档上传后会写入 MinIO、解析文本、自动切 chunk、创建 embedding job，并由 worker 异步调用千问向量模型写入 PostgreSQL pgvector；检索侧已支持 vector、keyword、hybrid 三种策略对比和 citations 返回。
 
-- FastAPI 后端：文档上传、哈希去重、MinIO 对象存储、chunk 查询、embedding job 重试。
-- PostgreSQL：使用 `pgvector/pgvector:pg16`，迁移会创建 `document_chunks` 和 `embedding_jobs`。
+- FastAPI 后端：文档上传、哈希去重、MinIO 对象存储、chunk 查询、embedding job 重试、检索接口。
+- PostgreSQL：使用 `pgvector/pgvector:pg16`，保存 chunk 原文、`vector(1024)`、FTS `search_vector` 和 metadata filter 字段。
 - Worker：从 Redis 队列消费 embedding job，批量调用 `text-embedding-v4`。
-- Vue 3 前端：文档列表、状态展示、文本预览、chunk 文本/metadata/embedding 状态查看。
+- Vue 3 前端：文档列表、状态展示、文本预览、chunk 文本/metadata/embedding 状态查看，以及检索结果/citations 对比。
 
 ## 运行
 
@@ -18,7 +18,7 @@ Copy-Item .env.example .env
 在 `.env` 中配置百炼 API Key：
 
 ```text
-DASHSCOPE_API_KEY=sk-ff93e976fa334cbf8d13d794a7b665d6
+DASHSCOPE_API_KEY=<your-rotated-local-key>
 ```
 
 启动完整服务：
@@ -57,6 +57,7 @@ docker compose up -d --build
 5. 后端按标题/段落优先切 chunk，超长内容再按字符窗口切片。
 6. 后端创建幂等 embedding job 并推入 Redis 队列。
 7. worker 批量调用 `text-embedding-v4`，默认 `dimensions=1024`，写入 `document_chunks.embedding vector(1024)`。
+8. 检索接口可按 tenant、workspace、document、tags、时间和权限 subject 过滤 chunk。
 
 Day 1 的旧文档不会自动回填 chunk。若旧记录没有 MinIO object key 且没有 chunk，再次上传同 hash 文件时会替换为 Day 2 流程重新入库。
 
@@ -70,8 +71,28 @@ Day 1 的旧文档不会自动回填 chunk。若旧记录没有 MinIO object key
 - `GET /api/documents/{document_id}/chunks`
 - `POST /api/documents/{document_id}/embedding-jobs`
 - `DELETE /api/documents/{document_id}`
+- `POST /api/retrieval/search`
+- `POST /api/retrieval/compare`
 
 `chunks` 查询目前仍放在 `documents` router 内，因为它是文档的子资源；切片策略本身在 `backend/app/services/chunking.py`。
+
+检索请求示例：
+
+```json
+{
+  "query": "文档里怎么描述向量入库？",
+  "strategy": "hybrid",
+  "top_k": 8,
+  "filters": {
+    "tenant_id": "default",
+    "workspace_id": "default",
+    "tags": ["rag"],
+    "principal": "team-a"
+  }
+}
+```
+
+`strategy=keyword` 只依赖 PostgreSQL FTS/ILIKE；`strategy=vector` 和 `hybrid` 需要配置 `DASHSCOPE_API_KEY` 来生成 query embedding。当前 Day 3 不生成回答，只返回 citations；无可靠来源时 `need_human_handoff=true`。
 
 ## 数据库迁移
 
@@ -91,7 +112,7 @@ alembic upgrade head
 当前迁移版本应为：
 
 ```text
-202607030002
+202607040001
 ```
 
 ## 本地运行后端
@@ -112,7 +133,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-## Day 2 验收
+## Day 2/Day 3 验收
 
 分别上传以下类型的文件：
 
@@ -128,6 +149,9 @@ uvicorn app.main:app --reload
 - 选中文档后，可以查看文本预览、解析 metadata、chunk 文本、chunk metadata 和 embedding 状态。
 - `document_chunks` 表有 chunk 数据，向量化成功后 `embedding` 不为空。
 - 删除文档后，对应版本、chunk、embedding job 和 MinIO 对象被清理。
+- 使用上传表单传入 tenant/workspace/tags/permissions 后，document 和 chunk 都会带上相同过滤字段。
+- 在前端检索区可分别运行 Vector、Keyword、Hybrid，也可以点击 Compare 同时对比三组结果。
+- 检索结果包含文档名、chunk 编号、页码/标题、score、snippet 和 metadata；无结果时显示 `need_human_handoff`。
 
 如果没有配置 `DASHSCOPE_API_KEY`，worker 会保留任务重试状态，并在日志中提示 `DASHSCOPE_API_KEY is not configured`。
 

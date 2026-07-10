@@ -4,10 +4,11 @@
 """
 from collections import Counter
 from hashlib import sha256
+import json
 from pathlib import Path
 import tempfile
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -33,6 +34,10 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
+    tenant_id: str = Form(default="default"),
+    workspace_id: str = Form(default="default"),
+    tags: str | None = Form(default=None),
+    permissions: str | None = Form(default=None),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -59,6 +64,11 @@ async def upload_document(
         )
 
     source_hash = sha256(content).hexdigest()
+    parsed_tags = _parse_tags(tags)
+    parsed_permissions = _parse_permissions(permissions)
+    normalized_tenant_id = tenant_id.strip() or "default"
+    normalized_workspace_id = workspace_id.strip() or "default"
+
     existing = db.scalar(select(Document).where(Document.source_hash == source_hash))
     if existing:
         if _is_legacy_unindexed_document(existing):
@@ -77,6 +87,10 @@ async def upload_document(
         source_hash=source_hash,
         size_bytes=len(content),
         status="parsing",
+        tenant_id=normalized_tenant_id,
+        workspace_id=normalized_workspace_id,
+        tags=parsed_tags,
+        permissions=parsed_permissions,
         metadata_json={},
     )
     db.add(document)
@@ -141,6 +155,10 @@ async def upload_document(
                     page=chunk.page,
                     heading=chunk.heading,
                     source_hash=source_hash,
+                    tenant_id=document.tenant_id,
+                    workspace_id=document.workspace_id,
+                    tags=document.tags,
+                    permissions=document.permissions,
                     text=chunk.text,
                     metadata_json=chunk.metadata,
                     embedding_status="pending",
@@ -281,6 +299,10 @@ def _document_payload(document: Document) -> dict:
         "source_hash": document.source_hash,
         "size_bytes": document.size_bytes,
         "status": document.status,
+        "tenant_id": document.tenant_id,
+        "workspace_id": document.workspace_id,
+        "tags": document.tags or [],
+        "permissions": document.permissions or {},
         "parser_name": document.parser_name,
         "error_message": document.error_message,
         "text_preview": document.text_preview or "",
@@ -303,6 +325,10 @@ def _chunk_payload(chunk: DocumentChunk) -> dict:
         "page": chunk.page,
         "heading": chunk.heading,
         "source_hash": chunk.source_hash,
+        "tenant_id": chunk.tenant_id,
+        "workspace_id": chunk.workspace_id,
+        "tags": chunk.tags or [],
+        "permissions": chunk.permissions or {},
         "text": chunk.text,
         "metadata": chunk.metadata_json or {},
         "embedding": {
@@ -357,6 +383,50 @@ def _write_temp_file(content: bytes, ext: str) -> Path:
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
         temp_file.write(content)
         return Path(temp_file.name)
+
+
+def _parse_tags(raw_tags: str | None) -> list[str]:
+    if not raw_tags:
+        return []
+    value = raw_tags.strip()
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    except json.JSONDecodeError:
+        pass
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _parse_permissions(raw_permissions: str | None) -> dict:
+    if not raw_permissions:
+        return {}
+    value = raw_permissions.strip()
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="permissions must be a JSON object",
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="permissions must be a JSON object",
+        )
+    subjects = parsed.get("subjects")
+    if subjects is not None and not isinstance(subjects, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="permissions.subjects must be a list when provided",
+        )
+    if isinstance(subjects, list):
+        parsed["subjects"] = [str(subject).strip() for subject in subjects if str(subject).strip()]
+    return parsed
 
 
 def _get_idempotent_response(db: Session, key: str | None, scope: str) -> JSONResponse | None:

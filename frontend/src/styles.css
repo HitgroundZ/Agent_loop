@@ -17,7 +17,9 @@ body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -120,9 +122,14 @@ button:disabled {
 
 .upload-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   padding: 12px;
+}
+
+.upload-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
 }
 
 .file-picker {
@@ -145,6 +152,50 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid #cbd5df;
+  border-radius: 6px;
+  color: #18202a;
+  background: #ffffff;
+}
+
+input,
+select {
+  min-height: 38px;
+  padding: 0 10px;
+}
+
+textarea {
+  padding: 9px 10px;
+  resize: vertical;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.form-grid label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.form-grid label span,
+.retrieval-form label span {
+  color: #607083;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.wide-field {
+  grid-column: 1 / -1;
 }
 
 .primary,
@@ -262,6 +313,122 @@ button:disabled {
   min-width: 0;
   padding: 28px;
   overflow: auto;
+}
+
+.content > .retrieval-panel {
+  max-width: 1180px;
+  margin: 0 auto 18px;
+}
+
+.retrieval-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.retrieval-header,
+.retrieval-actions,
+.group-header,
+.citation-row header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.retrieval-header h2 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0;
+}
+
+.retrieval-actions {
+  align-items: center;
+}
+
+.retrieval-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(120px, 0.5fr) minmax(90px, 0.35fr) repeat(4, minmax(110px, 0.55fr)) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.retrieval-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.checkbox-line {
+  display: inline-flex !important;
+  grid-template-columns: none !important;
+  align-items: center !important;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #cbd5df;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.checkbox-line input {
+  width: auto;
+  min-height: auto;
+  margin: 0;
+}
+
+.retrieval-results {
+  display: grid;
+  gap: 16px;
+}
+
+.retrieval-group {
+  border-top: 1px solid #dce3ea;
+  padding-top: 14px;
+}
+
+.retrieval-group:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.group-header h3 {
+  margin: 0;
+  padding: 0;
+  border-bottom: 0;
+  font-size: 15px;
+}
+
+.citation-row {
+  display: grid;
+  gap: 8px;
+  padding: 14px 0;
+  border-top: 1px solid #eef2f5;
+}
+
+.citation-row header {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  align-items: center;
+  color: #607083;
+  font-size: 12px;
+}
+
+.citation-row header strong {
+  color: #18202a;
+  font-size: 14px;
+}
+
+.citation-row p {
+  margin: 0;
+  color: #324255;
+  line-height: 1.6;
+}
+
+.citation-row pre {
+  max-height: 150px;
+  padding: 10px;
+  border-radius: 6px;
+  background: #f8fafc;
 }
 
 .detail {
@@ -443,6 +610,14 @@ pre {
   .detail-grid {
     grid-template-columns: 1fr;
   }
+
+  .retrieval-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .query-field {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 520px) {
@@ -455,15 +630,25 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .upload-row,
+  .form-grid,
+  .retrieval-form {
+    grid-template-columns: 1fr;
+  }
+
   .brand,
   .detail-header,
-  .header-actions {
+  .header-actions,
+  .retrieval-header,
+  .retrieval-actions,
+  .group-header {
     align-items: stretch;
     flex-direction: column;
   }
 
   .danger,
-  .secondary {
+  .secondary,
+  .primary {
     width: 100%;
   }
 

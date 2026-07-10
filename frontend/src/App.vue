@@ -12,6 +12,22 @@ const deleting = ref(false)
 const retrying = ref(false)
 const errorMessage = ref('')
 const health = ref('checking')
+const uploadTenantId = ref('default')
+const uploadWorkspaceId = ref('default')
+const uploadTags = ref('')
+const uploadPermissions = ref('')
+const retrievalQuery = ref('')
+const retrievalStrategy = ref('hybrid')
+const retrievalTopK = ref('')
+const retrievalTenantId = ref('default')
+const retrievalWorkspaceId = ref('default')
+const retrievalTags = ref('')
+const retrievalPrincipal = ref('')
+const retrievalUseSelectedDocument = ref(false)
+const retrievalLoading = ref(false)
+const retrievalError = ref('')
+const retrievalResult = ref(null)
+const compareResult = ref(null)
 
 let pollingTimer = null
 
@@ -27,6 +43,25 @@ const selectedHasFailedEmbedding = computed(() =>
   selectedChunks.value.some((chunk) => chunk.embedding?.status === 'failed') ||
   selectedDocument.value?.status === 'embedding_failed'
 )
+const displayedRetrievalGroups = computed(() => {
+  if (compareResult.value?.results) {
+    return ['vector', 'keyword', 'hybrid'].map((strategy) => ({
+      key: strategy,
+      title: strategyLabel(strategy),
+      result: compareResult.value.results[strategy]
+    }))
+  }
+  if (retrievalResult.value) {
+    return [
+      {
+        key: retrievalResult.value.strategy,
+        title: strategyLabel(retrievalResult.value.strategy),
+        result: retrievalResult.value
+      }
+    ]
+  }
+  return []
+})
 
 onMounted(async () => {
   await Promise.all([checkHealth(), fetchDocuments()])
@@ -88,6 +123,14 @@ async function uploadDocument() {
 
   const form = new FormData()
   form.append('file', selectedFile.value)
+  form.append('tenant_id', uploadTenantId.value.trim() || 'default')
+  form.append('workspace_id', uploadWorkspaceId.value.trim() || 'default')
+  if (uploadTags.value.trim()) {
+    form.append('tags', uploadTags.value.trim())
+  }
+  if (uploadPermissions.value.trim()) {
+    form.append('permissions', uploadPermissions.value.trim())
+  }
 
   try {
     const response = await fetch('/api/documents/upload', {
@@ -216,6 +259,101 @@ function makeIdempotencyKey() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
+async function runRetrieval() {
+  await submitRetrieval('/api/retrieval/search', buildRetrievalPayload(retrievalStrategy.value), false)
+}
+
+async function compareRetrieval() {
+  await submitRetrieval('/api/retrieval/compare', buildRetrievalPayload(), true)
+}
+
+async function submitRetrieval(url, payload, isCompare) {
+  if (!payload.query) {
+    retrievalError.value = '请输入检索问题'
+    return
+  }
+
+  retrievalLoading.value = true
+  retrievalError.value = ''
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.detail || '检索失败')
+    }
+    if (isCompare) {
+      compareResult.value = data
+      retrievalResult.value = null
+    } else {
+      retrievalResult.value = data
+      compareResult.value = null
+    }
+  } catch (error) {
+    retrievalError.value = error.message
+  } finally {
+    retrievalLoading.value = false
+  }
+}
+
+function buildRetrievalPayload(strategy = null) {
+  const payload = {
+    query: retrievalQuery.value.trim(),
+    filters: buildRetrievalFilters()
+  }
+  const topK = Number(retrievalTopK.value)
+  if (Number.isInteger(topK) && topK > 0) {
+    payload.top_k = topK
+  }
+  if (strategy) {
+    payload.strategy = strategy
+  }
+  return payload
+}
+
+function buildRetrievalFilters() {
+  const filters = {}
+  const tenant = retrievalTenantId.value.trim()
+  const workspace = retrievalWorkspaceId.value.trim()
+  const tags = splitList(retrievalTags.value)
+  const principal = retrievalPrincipal.value.trim()
+
+  if (tenant) filters.tenant_id = tenant
+  if (workspace) filters.workspace_id = workspace
+  if (tags.length > 0) filters.tags = tags
+  if (principal) filters.principal = principal
+  if (retrievalUseSelectedDocument.value && selectedDocument.value) {
+    filters.document_id = selectedDocument.value.id
+  }
+  return filters
+}
+
+function splitList(value) {
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function strategyLabel(strategy) {
+  const labels = {
+    vector: 'Vector',
+    keyword: 'Keyword',
+    hybrid: 'Hybrid'
+  }
+  return labels[strategy] || strategy
+}
+
+function formatScore(score) {
+  if (score === null || score === undefined) return '-'
+  return Number(score).toFixed(4)
+}
+
 function statusLabel(status) {
   const labels = {
     uploaded: '已上传',
@@ -257,25 +395,45 @@ function formatDate(value) {
     <aside class="sidebar">
       <div class="brand">
         <div>
-          <p class="eyebrow">Day 2</p>
+          <p class="eyebrow">Day 3</p>
           <h1>知识库</h1>
         </div>
         <span class="health" :class="health">{{ health }}</span>
       </div>
 
       <section class="panel upload-panel">
-        <label class="file-picker" for="document-file">
-          <input
-            id="document-file"
-            type="file"
-            accept=".pdf,.docx,.md,.markdown,.html,.htm"
-            @change="pickFile"
-          />
-          <span>{{ selectedFile ? selectedFile.name : '选择文档' }}</span>
-        </label>
-        <button class="primary" :disabled="uploading || !selectedFile" @click="uploadDocument">
-          {{ uploading ? '上传中' : '上传' }}
-        </button>
+        <div class="upload-row">
+          <label class="file-picker" for="document-file">
+            <input
+              id="document-file"
+              type="file"
+              accept=".pdf,.docx,.md,.markdown,.html,.htm"
+              @change="pickFile"
+            />
+            <span>{{ selectedFile ? selectedFile.name : '选择文档' }}</span>
+          </label>
+          <button class="primary" :disabled="uploading || !selectedFile" @click="uploadDocument">
+            {{ uploading ? '上传中' : '上传' }}
+          </button>
+        </div>
+        <div class="form-grid upload-metadata">
+          <label>
+            <span>Tenant</span>
+            <input v-model="uploadTenantId" type="text" placeholder="default" />
+          </label>
+          <label>
+            <span>Workspace</span>
+            <input v-model="uploadWorkspaceId" type="text" placeholder="default" />
+          </label>
+          <label class="wide-field">
+            <span>Tags</span>
+            <input v-model="uploadTags" type="text" placeholder="tag1, tag2" />
+          </label>
+          <label class="wide-field">
+            <span>Permissions JSON</span>
+            <textarea v-model="uploadPermissions" rows="2" placeholder='{"subjects":["team-a"]}'></textarea>
+          </label>
+        </div>
       </section>
 
       <section class="stats">
@@ -319,6 +477,97 @@ function formatDate(value) {
     </aside>
 
     <section class="content">
+      <section class="panel retrieval-panel">
+        <header class="retrieval-header">
+          <div>
+            <p class="eyebrow">Retrieval</p>
+            <h2>检索</h2>
+          </div>
+          <div class="retrieval-actions">
+            <button class="secondary" :disabled="retrievalLoading" @click="compareRetrieval">
+              Compare
+            </button>
+            <button class="primary" :disabled="retrievalLoading" @click="runRetrieval">
+              {{ retrievalLoading ? '检索中' : 'Search' }}
+            </button>
+          </div>
+        </header>
+
+        <div class="retrieval-form">
+          <label class="query-field">
+            <span>Query</span>
+            <input v-model="retrievalQuery" type="text" placeholder="输入问题或关键词" @keyup.enter="runRetrieval" />
+          </label>
+          <label>
+            <span>Strategy</span>
+            <select v-model="retrievalStrategy">
+              <option value="hybrid">Hybrid</option>
+              <option value="vector">Vector</option>
+              <option value="keyword">Keyword</option>
+            </select>
+          </label>
+          <label>
+            <span>Top K</span>
+            <input v-model="retrievalTopK" type="number" min="1" max="50" placeholder="auto" />
+          </label>
+          <label>
+            <span>Tenant</span>
+            <input v-model="retrievalTenantId" type="text" placeholder="default" />
+          </label>
+          <label>
+            <span>Workspace</span>
+            <input v-model="retrievalWorkspaceId" type="text" placeholder="default" />
+          </label>
+          <label>
+            <span>Tags</span>
+            <input v-model="retrievalTags" type="text" placeholder="tag1, tag2" />
+          </label>
+          <label>
+            <span>Principal</span>
+            <input v-model="retrievalPrincipal" type="text" placeholder="user/team" />
+          </label>
+          <label class="checkbox-line">
+            <input v-model="retrievalUseSelectedDocument" type="checkbox" :disabled="!selectedDocument" />
+            <span>当前文档</span>
+          </label>
+        </div>
+
+        <p v-if="retrievalError" class="error">{{ retrievalError }}</p>
+
+        <div v-if="displayedRetrievalGroups.length" class="retrieval-results">
+          <article v-for="group in displayedRetrievalGroups" :key="group.key" class="retrieval-group">
+            <header class="group-header">
+              <div>
+                <h3>{{ group.title }}</h3>
+                <p class="muted">
+                  {{ group.result?.rewritten_query || '-' }} · top {{ group.result?.top_k || '-' }}
+                </p>
+              </div>
+              <span v-if="group.result?.need_human_handoff" class="status failed">need_human_handoff</span>
+              <span v-else class="status indexed">{{ group.result?.results?.length || 0 }} citations</span>
+            </header>
+            <p v-if="group.result?.diagnostics?.error" class="error">
+              {{ group.result.diagnostics.error }}
+            </p>
+            <div v-else-if="!group.result" class="empty">暂无结果</div>
+            <div v-else-if="group.result?.need_human_handoff" class="empty">未检索到可靠来源</div>
+            <template v-else>
+              <article v-for="item in group.result.results" :key="`${group.key}-${item.chunk_id}`" class="citation-row">
+                <header>
+                  <strong>{{ item.document_name }}</strong>
+                  <span>Chunk {{ item.chunk_index + 1 }}</span>
+                  <span v-if="item.page">Page {{ item.page }}</span>
+                  <span v-if="item.heading">{{ item.heading }}</span>
+                  <span>score {{ formatScore(item.score) }}</span>
+                </header>
+                <p>{{ item.snippet }}</p>
+                <pre>{{ JSON.stringify(item.metadata, null, 2) }}</pre>
+              </article>
+            </template>
+          </article>
+        </div>
+      </section>
+
       <div v-if="selectedDocument" class="detail">
         <header class="detail-header">
           <div>
@@ -367,6 +616,14 @@ function formatDate(value) {
               <div>
                 <dt>SHA-256</dt>
                 <dd class="hash">{{ selectedDocument.source_hash }}</dd>
+              </div>
+              <div>
+                <dt>检索过滤</dt>
+                <dd class="summary-line">
+                  <span>{{ selectedDocument.tenant_id || 'default' }}</span>
+                  <span>{{ selectedDocument.workspace_id || 'default' }}</span>
+                  <span>{{ (selectedDocument.tags || []).join(', ') || 'no tags' }}</span>
+                </dd>
               </div>
             </dl>
           </section>

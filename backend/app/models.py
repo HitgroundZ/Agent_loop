@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
@@ -29,6 +30,10 @@ class Document(Base):
     source_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)       # 防止同一个源文件重复入库
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="uploaded")                 # 文档状态(uploaded, parsing, chunked, embedding, indexed, failed)
+    tenant_id: Mapped[str] = mapped_column(String(80), nullable=False, default="default", index=True)
+    workspace_id: Mapped[str] = mapped_column(String(80), nullable=False, default="default", index=True)
+    tags: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    permissions: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     parser_name: Mapped[str | None] = mapped_column(String(80), nullable=True)                          # 用哪个解析器解析的(markdown_parser, pdf_parser...)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     text_preview: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -93,6 +98,10 @@ class DocumentChunk(Base):
     page: Mapped[int | None] = mapped_column(Integer, nullable=True)
     heading: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(80), nullable=False, default="default", index=True)
+    workspace_id: Mapped[str] = mapped_column(String(80), nullable=False, default="default", index=True)
+    tags: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    permissions: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_json: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
     embedding_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)

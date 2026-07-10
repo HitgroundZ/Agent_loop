@@ -5,6 +5,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.database import SessionLocal
 from app.routers.documents import router as documents_router
+from app.routers.retrieval import router as retrieval_router
 
 
 settings = get_settings()
@@ -20,6 +21,7 @@ app.add_middleware(
 
 # 挂载路由
 app.include_router(documents_router)
+app.include_router(retrieval_router)
 
 # 健康状态测试路由
 @app.get("/api/health")
