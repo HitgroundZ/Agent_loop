@@ -1,3 +1,8 @@
+"""
+RAG 检索入口：接收用户查询请求，校验参数，注入数据库和配置
+然后调用 RetrievalService 去执行 vector / keyword / hybrid 检索。
+"""
+
 from datetime import datetime
 from typing import Literal
 
