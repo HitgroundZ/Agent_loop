@@ -109,9 +109,20 @@ button:disabled {
 .status.embedding,
 .status.pending,
 .status.queued,
-.status.running {
+.status.running,
+.status.created,
+.status.analyzing,
+.status.retrieving,
+.status.acting,
+.status.waiting_approval,
+.status.evaluating {
   color: #7a4b00;
   background: #fff1cc;
+}
+
+.status.escalated_to_human {
+  color: #6f3d8a;
+  background: #f0e4fb;
 }
 
 .panel {
@@ -318,6 +329,158 @@ textarea {
 .content > .retrieval-panel {
   max-width: 1180px;
   margin: 0 auto 18px;
+}
+
+.content > .agent-panel {
+  max-width: 1180px;
+  margin: 0 auto 18px;
+}
+
+.agent-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.agent-header,
+.agent-actions,
+.agent-status-bar,
+.trace-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-header h2 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0;
+}
+
+.agent-actions {
+  align-items: center;
+}
+
+.agent-actions input {
+  width: 220px;
+}
+
+.agent-input-row {
+  display: grid;
+}
+
+.agent-output {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-status-bar {
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  color: #607083;
+  font-size: 12px;
+}
+
+.state-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.state-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #4b5563;
+  background: #eef2f5;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.state-chip.completed {
+  color: #12613a;
+  background: #dff5e8;
+}
+
+.state-chip.failed {
+  color: #9a2c2c;
+  background: #ffe1df;
+}
+
+.state-chip.escalated_to_human {
+  color: #6f3d8a;
+  background: #f0e4fb;
+}
+
+.agent-answer,
+.agent-citations,
+.agent-trace,
+.agent-session {
+  border-top: 1px solid #dce3ea;
+  padding-top: 14px;
+}
+
+.agent-answer h3,
+.agent-citations h3,
+.agent-trace h3,
+.agent-session h3 {
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+  font-size: 15px;
+}
+
+.agent-answer pre,
+.agent-trace pre {
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.trace-list,
+.message-list {
+  display: grid;
+  gap: 8px;
+}
+
+.trace-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #eef2f5;
+  border-radius: 6px;
+  color: #607083;
+  font-size: 12px;
+}
+
+.trace-error {
+  color: #9a2c2c;
+}
+
+.compact-button {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.message-list article {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #eef2f5;
+  border-radius: 6px;
+  color: #324255;
+  font-size: 13px;
+}
+
+.message-list span {
+  overflow-wrap: anywhere;
 }
 
 .retrieval-panel {
@@ -615,6 +778,10 @@ pre {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .trace-row {
+    grid-template-columns: 1fr;
+  }
+
   .query-field {
     grid-column: 1 / -1;
   }
@@ -641,9 +808,15 @@ pre {
   .header-actions,
   .retrieval-header,
   .retrieval-actions,
+  .agent-header,
+  .agent-actions,
   .group-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .agent-actions input {
+    width: 100%;
   }
 
   .danger,

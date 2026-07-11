@@ -140,6 +140,56 @@ class EmbeddingJob(Base):
     version: Mapped[DocumentVersion] = relationship(back_populates="embedding_jobs")
 
 
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="created", index=True)
+    retrieval_strategy: Mapped[str] = mapped_column(String(20), nullable=False, default="hybrid")
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    citations: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
+    plan: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
+    retrieval_result: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    evaluation: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    token_usage: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    trace_events: Mapped[list["AgentTraceEvent"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="AgentTraceEvent.sequence",
+    )
+
+
+class AgentTraceEvent(Base):
+    __tablename__ = "agent_trace_events"
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_agent_trace_events_run_sequence"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    input_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    output_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    output_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_usage: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    run: Mapped[AgentRun] = relationship(back_populates="trace_events")
+
+
 class IdempotencyRecord(Base):
     """
     幂等键，如果同一个操作执行多次，结果应该相同

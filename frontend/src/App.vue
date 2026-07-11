@@ -28,6 +28,12 @@ const retrievalLoading = ref(false)
 const retrievalError = ref('')
 const retrievalResult = ref(null)
 const compareResult = ref(null)
+const agentQuestion = ref('')
+const agentSessionId = ref('')
+const agentLoading = ref(false)
+const agentError = ref('')
+const agentResult = ref(null)
+const agentTraceExpanded = ref(false)
 
 let pollingTimer = null
 
@@ -62,6 +68,9 @@ const displayedRetrievalGroups = computed(() => {
   }
   return []
 })
+const agentTracePreview = computed(() => agentResult.value?.trace_preview || [])
+const agentCitations = computed(() => agentResult.value?.citations || [])
+const agentSessionMessages = computed(() => agentResult.value?.session_state?.recent_messages || [])
 
 onMounted(async () => {
   await Promise.all([checkHealth(), fetchDocuments()])
@@ -267,6 +276,52 @@ async function compareRetrieval() {
   await submitRetrieval('/api/retrieval/compare', buildRetrievalPayload(), true)
 }
 
+async function runAgent() {
+  const question = agentQuestion.value.trim() || retrievalQuery.value.trim()
+  if (!question) {
+    agentError.value = 'Enter a question'
+    return
+  }
+
+  agentLoading.value = true
+  agentError.value = ''
+  try {
+    const payload = {
+      question,
+      strategy: retrievalStrategy.value,
+      filters: buildRetrievalFilters(),
+      auto_approve: true
+    }
+    const topK = Number(retrievalTopK.value)
+    if (Number.isInteger(topK) && topK > 0) {
+      payload.top_k = topK
+    }
+    const sessionId = agentSessionId.value.trim()
+    if (sessionId) {
+      payload.session_id = sessionId
+    }
+
+    const response = await fetch('/api/agent/runs', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.detail || 'Agent run failed')
+    }
+    agentResult.value = data
+    agentSessionId.value = data.session_id || sessionId
+    agentQuestion.value = question
+  } catch (error) {
+    agentError.value = error.message
+  } finally {
+    agentLoading.value = false
+  }
+}
+
 async function submitRetrieval(url, payload, isCompare) {
   if (!payload.query) {
     retrievalError.value = '请输入检索问题'
@@ -352,6 +407,21 @@ function strategyLabel(strategy) {
 function formatScore(score) {
   if (score === null || score === undefined) return '-'
   return Number(score).toFixed(4)
+}
+
+function formatDuration(ms) {
+  if (ms === null || ms === undefined) return '-'
+  if (ms < 1000) return `${ms} ms`
+  return `${(ms / 1000).toFixed(2)} s`
+}
+
+function formatTokens(tokens) {
+  if (!tokens) return '0 tokens'
+  return `${tokens.total_tokens || 0} tokens`
+}
+
+function agentStateClass(state) {
+  return state || 'unknown'
 }
 
 function statusLabel(status) {
@@ -477,6 +547,108 @@ function formatDate(value) {
     </aside>
 
     <section class="content">
+      <section class="panel agent-panel">
+        <header class="agent-header">
+          <div>
+            <p class="eyebrow">Day 4</p>
+            <h2>Agent Run</h2>
+          </div>
+          <div class="agent-actions">
+            <input v-model="agentSessionId" type="text" placeholder="session id" />
+            <button class="primary" :disabled="agentLoading" @click="runAgent">
+              {{ agentLoading ? 'Running' : 'Ask Agent' }}
+            </button>
+          </div>
+        </header>
+
+        <div class="agent-input-row">
+          <input
+            v-model="agentQuestion"
+            type="text"
+            placeholder="Ask a question. Current retrieval filters will be reused."
+            @keyup.enter="runAgent"
+          />
+        </div>
+
+        <p v-if="agentError" class="error">{{ agentError }}</p>
+
+        <div v-if="agentResult" class="agent-output">
+          <div class="agent-status-bar">
+            <span class="status" :class="agentStateClass(agentResult.current_state)">
+              {{ agentResult.current_state }}
+            </span>
+            <span>run {{ agentResult.id }}</span>
+            <span>session {{ agentResult.session_id }}</span>
+            <span>{{ formatTokens(agentResult.token_usage) }}</span>
+            <span>retry {{ agentResult.retry_count || 0 }}</span>
+          </div>
+
+          <div class="state-flow">
+            <span
+              v-for="(state, index) in agentResult.state_flow"
+              :key="`${state}-${index}`"
+              class="state-chip"
+              :class="agentStateClass(state)"
+            >
+              {{ index + 1 }}. {{ state }}
+            </span>
+          </div>
+
+          <section class="agent-answer">
+            <h3>Answer</h3>
+            <pre>{{ agentResult.answer || 'No answer yet' }}</pre>
+          </section>
+
+          <section class="agent-citations">
+            <h3>Citations</h3>
+            <div v-if="agentCitations.length === 0" class="empty">No citations</div>
+            <article v-for="item in agentCitations" :key="item.id" class="citation-row">
+              <header>
+                <strong>{{ item.label }} {{ item.document_name }}</strong>
+                <span>Chunk {{ (item.chunk_index ?? 0) + 1 }}</span>
+                <span v-if="item.page">Page {{ item.page }}</span>
+                <span v-if="item.heading">{{ item.heading }}</span>
+                <span>score {{ formatScore(item.score) }}</span>
+              </header>
+              <p>{{ item.snippet }}</p>
+            </article>
+          </section>
+
+          <section class="agent-trace">
+            <div class="trace-title-row">
+              <h3>Trace</h3>
+              <button class="secondary compact-button" @click="agentTraceExpanded = !agentTraceExpanded">
+                {{ agentTraceExpanded ? 'Hide detail' : 'Show detail' }}
+              </button>
+            </div>
+            <div class="trace-list">
+              <article v-for="event in agentTracePreview" :key="event.sequence" class="trace-row">
+                <span class="state-chip" :class="agentStateClass(event.state)">
+                  {{ event.sequence }} {{ event.state }}
+                </span>
+                <span>{{ event.output_summary }}</span>
+                <span>{{ formatDuration(event.duration_ms) }}</span>
+                <span>{{ formatTokens(event.token_usage) }}</span>
+                <span v-if="event.retry_count">retry {{ event.retry_count }}</span>
+                <span v-if="event.error" class="trace-error">{{ event.error }}</span>
+              </article>
+            </div>
+            <pre v-if="agentTraceExpanded">{{ JSON.stringify(agentResult.trace_events, null, 2) }}</pre>
+          </section>
+
+          <section class="agent-session">
+            <h3>Recent Session Messages</h3>
+            <div v-if="agentSessionMessages.length === 0" class="empty">No cached messages</div>
+            <div v-else class="message-list">
+              <article v-for="message in agentSessionMessages" :key="`${message.run_id}-${message.role}-${message.created_at}`">
+                <strong>{{ message.role }}</strong>
+                <span>{{ message.content }}</span>
+              </article>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <section class="panel retrieval-panel">
         <header class="retrieval-header">
           <div>
