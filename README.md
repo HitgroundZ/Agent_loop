@@ -1,6 +1,6 @@
 # Agent Loop 知识库 MVP
 
-当前版本完成到 Day 3：文档上传后会写入 MinIO、解析文本、自动切片、创建向量化任务，并由 worker 异步调用千问向量模型写入 PostgreSQL pgvector；检索侧已支持向量检索、关键词检索、混合检索三种策略对比和引用返回。
+当前版本完成到 Day 5：在文档入库、混合检索和 Day 4 智能体 trace 的基础上，新增 Redis 短期记忆、PostgreSQL 用户级长期记忆、跨会话选择性召回，以及可启停、删除、纠错和追溯原文的前端记忆管理。
 
 - FastAPI 后端：文档上传、哈希去重、MinIO 对象存储、chunk 查询、embedding job 重试、检索接口。
 - PostgreSQL：使用 `pgvector/pgvector:pg16`，保存 chunk 原文、`vector(1024)`、FTS `search_vector` 和 metadata filter 字段。
@@ -73,6 +73,14 @@ Day 1 的旧文档不会自动回填 chunk。若旧记录没有 MinIO object key
 - `DELETE /api/documents/{document_id}`
 - `POST /api/retrieval/search`
 - `POST /api/retrieval/compare`
+- `POST /api/agent/runs`
+- `GET /api/agent/runs/{run_id}`
+- `GET /api/agent/sessions/{session_id}`
+- `GET /api/memories?user_id={user_id}`
+- `GET /api/memories/messages?user_id={user_id}`
+- `PATCH /api/memories/{memory_id}`
+- `POST /api/memories/{memory_id}/corrections`
+- `DELETE /api/memories/{memory_id}`
 
 `chunks` 查询目前仍放在 `documents` router 内，因为它是文档的子资源；切片策略本身在 `backend/app/services/chunking.py`。
 
@@ -112,7 +120,7 @@ alembic upgrade head
 当前迁移版本应为：
 
 ```text
-202607040001
+202607060001
 ```
 
 ## 本地运行后端

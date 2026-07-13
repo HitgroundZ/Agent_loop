@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     redis_embedding_queue: str = "agent_loop:embedding_jobs"
     agent_session_message_limit: int = 12
     agent_session_ttl_seconds: int = 24 * 60 * 60
+    agent_rate_limit_requests: int = 60
+    agent_rate_limit_window_seconds: int = 60
+    agent_token_budget: int = 12000
+    memory_retrieval_limit: int = 5
+    memory_candidate_limit: int = 200
+    memory_context_max_chars: int = 2400
+    memory_cache_ttl_seconds: int = 5 * 60
     upload_dir: str = "./storage/uploads"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"                               # 允许跨域的ip
     max_upload_bytes: int = 50 * 1024 * 1024

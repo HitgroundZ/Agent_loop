@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
@@ -144,6 +144,7 @@ class AgentRun(Base):
     __tablename__ = "agent_runs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(String(80), nullable=False, default="default", index=True)
     session_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     question: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="created", index=True)
@@ -152,6 +153,7 @@ class AgentRun(Base):
     citations: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
     plan: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
     retrieval_result: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    memory_context: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
     evaluation: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     token_usage: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -164,6 +166,12 @@ class AgentRun(Base):
         back_populates="run",
         cascade="all, delete-orphan",
         order_by="AgentTraceEvent.sequence",
+    )
+
+    messages: Mapped[list["ConversationMessage"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="ConversationMessage.created_at",
     )
 
 
@@ -188,6 +196,44 @@ class AgentTraceEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     run: Mapped[AgentRun] = relationship(back_populates="trace_events")
+
+
+class ConversationMessage(Base):
+    """PostgreSQL 中不可变的原始对话消息。"""
+
+    __tablename__ = "conversation_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    run: Mapped[AgentRun] = relationship(back_populates="messages")
+
+
+class LongTermMemory(Base):
+    """可检索、可禁用并可追溯来源的长期记忆。"""
+
+    __tablename__ = "long_term_memories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    source_document_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    parent_memory_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    access_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class IdempotencyRecord(Base):

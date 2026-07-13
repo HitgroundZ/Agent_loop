@@ -12,12 +12,14 @@ from sqlalchemy.orm import Session, selectinload
 from app.config import Settings
 from app.models import AgentRun, AgentTraceEvent, new_id
 from app.services.agent_session_store import AgentSessionStore
+from app.services.memory import MemoryService
 from app.services.retrieval import RetrievalConfigurationError, RetrievalFilters, RetrievalService
 
 
 AgentState = Literal[
     "created",
     "analyzing",
+    "recalling",
     "retrieving",
     "acting",
     "waiting_approval",
@@ -31,6 +33,7 @@ RetrievalStrategy = Literal["vector", "keyword", "hybrid"]
 STATE_FLOW: list[str] = [
     "created",
     "analyzing",
+    "recalling",
     "retrieving",
     "acting",
     "waiting_approval",
@@ -40,17 +43,26 @@ STATE_FLOW: list[str] = [
 TERMINAL_STATES = {"completed", "failed", "escalated_to_human"}
 
 
+class AgentLimitExceeded(RuntimeError):
+    def __init__(self, limit_state: dict) -> None:
+        self.limit_state = limit_state
+        reason = limit_state.get("reason") or "request_limit_exceeded"
+        super().__init__(reason)
+
+
 class AgentLoopService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.retrieval = RetrievalService(settings)
         self.session_store = AgentSessionStore(settings)
+        self.memory = MemoryService(settings)
 
     def run(
         self,
         db: Session,
         *,
         question: str,
+        user_id: str,
         session_id: str | None,
         strategy: RetrievalStrategy = "hybrid",
         top_k: int | None = None,
@@ -58,9 +70,17 @@ class AgentLoopService:
         auto_approve: bool = True,
     ) -> dict:
         normalized_question = _normalize_text(question)
+        normalized_user_id = _normalize_text(user_id) or "default"
+        normalized_session_id = _normalize_text(session_id or "") or new_id()
+        limit_state = self.session_store.check_request_limits(
+            normalized_user_id, normalized_session_id
+        )
+        if not limit_state.get("allowed", True):
+            raise AgentLimitExceeded(limit_state)
         run = AgentRun(
             id=new_id(),
-            session_id=_normalize_text(session_id or "") or new_id(),
+            user_id=normalized_user_id,
+            session_id=normalized_session_id,
             question=normalized_question,
             retrieval_strategy=strategy,
             status="created",
@@ -70,7 +90,22 @@ class AgentLoopService:
         db.commit()
         db.refresh(run)
 
-        self.session_store.append_message(run.session_id, "user", normalized_question, run.id)
+        user_message = self.memory.record_message(
+            db,
+            user_id=run.user_id,
+            session_id=run.session_id,
+            run_id=run.id,
+            role="user",
+            content=normalized_question,
+        )
+        self.session_store.append_message(
+            run.session_id,
+            "user",
+            normalized_question,
+            run.id,
+            user_id=run.user_id,
+            message_id=user_message.id,
+        )
 
         sequence = 0
         try:
@@ -81,6 +116,7 @@ class AgentLoopService:
                 sequence,
                 "created",
                 input_payload={
+                    "user_id": run.user_id,
                     "session_id": run.session_id,
                     "question": _shorten(normalized_question, 500),
                     "requested_strategy": strategy,
@@ -105,6 +141,44 @@ class AgentLoopService:
                 output_payload=analysis,
                 duration_ms=_duration_ms(start),
                 plan=analysis["plan"],
+            )
+
+            start = perf_counter()
+            memory_retrieval = self.memory.search(
+                db,
+                user_id=run.user_id,
+                session_id=run.session_id,
+                query=analysis["rewritten_query"],
+            )
+            run.memory_context = memory_retrieval.get("items") or []
+            memory_count = len(run.memory_context)
+            sequence = self._trace(
+                db,
+                run,
+                sequence,
+                "recalling",
+                input_payload={
+                    "user_id": run.user_id,
+                    "query": analysis["rewritten_query"],
+                    "candidate_limit": self.settings.memory_candidate_limit,
+                    "injection_limit": self.settings.memory_retrieval_limit,
+                },
+                output_summary=(
+                    f"检索到 {memory_count} 条相关长期记忆并选择性注入。"
+                    if memory_count
+                    else "未检索到与当前问题相关的已启用长期记忆。"
+                ),
+                output_payload={
+                    "candidate_count": memory_retrieval.get("candidate_count", 0),
+                    "injected_count": memory_count,
+                    "injected_chars": memory_retrieval.get("injected_chars", 0),
+                    "cached": memory_retrieval.get("cached", False),
+                    "memory_ids": [item.get("id") for item in run.memory_context],
+                    "source_message_ids": [
+                        item.get("source_message_id") for item in run.memory_context
+                    ],
+                },
+                duration_ms=_duration_ms(start),
             )
 
             start = perf_counter()
@@ -149,7 +223,11 @@ class AgentLoopService:
             )
 
             start = perf_counter()
-            answer_payload = self._act(normalized_question, retrieval_payload)
+            answer_payload = self._act(
+                normalized_question,
+                retrieval_payload,
+                run.memory_context,
+            )
             run.answer = answer_payload["answer"]
             run.citations = answer_payload["citations"]
             sequence = self._trace(
@@ -160,6 +238,7 @@ class AgentLoopService:
                 input_payload={
                     "question": normalized_question,
                     "citation_count": len(answer_payload["citations"]),
+                    "injected_memory_count": len(run.memory_context),
                 },
                 output_summary=answer_payload["summary"],
                 output_payload={
@@ -190,7 +269,10 @@ class AgentLoopService:
                 duration_ms=_duration_ms(start),
             )
             if not auto_approve:
+                self.session_store.set_pending_approval(run.session_id, run.id, run.user_id)
+                self._consume_run_tokens(run)
                 return self.get_run(db, run.id)
+            self.session_store.clear_pending_approval(run.session_id, run.id)
 
             start = perf_counter()
             evaluation = self._evaluate(answer_payload, retrieval_payload)
@@ -233,7 +315,33 @@ class AgentLoopService:
                 duration_ms=_duration_ms(start),
                 terminal=True,
             )
-            self.session_store.append_message(run.session_id, "assistant", run.answer or "", run.id)
+            assistant_message = self.memory.record_message(
+                db,
+                user_id=run.user_id,
+                session_id=run.session_id,
+                run_id=run.id,
+                role="assistant",
+                content=run.answer or "",
+            )
+            self.session_store.append_message(
+                run.session_id,
+                "assistant",
+                run.answer or "",
+                run.id,
+                user_id=run.user_id,
+                message_id=assistant_message.id,
+            )
+            self.memory.persist_run_memories(
+                db,
+                user_id=run.user_id,
+                session_id=run.session_id,
+                run_id=run.id,
+                question=normalized_question,
+                answer=run.answer or "",
+                source_message_id=user_message.id,
+                citations=run.citations or [],
+            )
+            self._consume_run_tokens(run)
             return self.get_run(db, run.id)
         except Exception as exc:
             db.rollback()
@@ -252,6 +360,7 @@ class AgentLoopService:
                 error=str(exc),
                 terminal=True,
             )
+            self._consume_run_tokens(run)
             return self.get_run(db, run.id)
 
     def get_run(self, db: Session, run_id: str) -> dict:
@@ -277,6 +386,7 @@ class AgentLoopService:
         rewritten_query = _normalize_text(question)
         plan = [
             {"step": "analyze", "status": "completed", "summary": "规范化问题并生成检索计划。"},
+            {"step": "recall", "status": "pending", "summary": "按用户检索相关且启用的长期记忆。"},
             {"step": "retrieve", "status": "pending", "summary": f"使用{_strategy_label(strategy)}检索知识库。"},
             {"step": "act", "status": "pending", "summary": "基于检索引用生成回答。"},
             {"step": "evaluate", "status": "pending", "summary": "检查回答是否有足够来源支撑。"},
@@ -327,9 +437,16 @@ class AgentLoopService:
             fallback["diagnostics"] = diagnostics
             return fallback, 1
 
-    def _act(self, question: str, retrieval: dict) -> dict:
+    def _act(self, question: str, retrieval: dict, memories: list[dict]) -> dict:
         results = retrieval.get("results") or []
-        citations = [_citation_payload(index, item) for index, item in enumerate(results[:5], start=1)]
+        document_citations = [
+            _citation_payload(index, item) for index, item in enumerate(results[:5], start=1)
+        ]
+        memory_citations = [
+            _memory_citation_payload(index, item)
+            for index, item in enumerate(memories, start=1)
+        ]
+        citations = document_citations + memory_citations
         if not citations:
             return {
                 "answer": "没有可靠信息来源，提交至人工处理。",
@@ -337,26 +454,38 @@ class AgentLoopService:
                 "summary": "检索未返回候选引用，未生成有来源支撑的回答。",
             }
 
-        answer_lines = [
-            "根据知识库中检索到的资料，回答如下：",
-            "",
-        ]
-        for citation in citations[:3]:
+        answer_lines = ["根据选择性检索到的可靠上下文，回答如下：", ""]
+        for citation in document_citations[:3]:
             label = citation["label"]
             source = citation["document_name"]
             snippet = _shorten(citation["snippet"], 360)
             answer_lines.append(f"{label}. {source}: {snippet}")
+        if memory_citations:
+            if document_citations:
+                answer_lines.extend(["", "与当前问题相关的历史记忆："])
+            for citation in memory_citations[:3]:
+                answer_lines.append(
+                    f"{citation['label']}. {_shorten(citation['snippet'], 360)}"
+                )
         answer_lines.append("")
-        answer_lines.append("引用来源已附在下方，可对照原始切片核验。")
+        answer_lines.append("引用来源已附在下方，可按消息或文档 ID 追溯原始内容。")
         return {
             "answer": "\n".join(answer_lines),
             "citations": citations,
-            "summary": f"已基于 {len(citations)} 条引用生成抽取式回答：{_shorten(question, 120)}",
+            "summary": (
+                f"已基于 {len(document_citations)} 条文档引用和 "
+                f"{len(memory_citations)} 条相关记忆生成回答：{_shorten(question, 120)}"
+            ),
         }
 
     def _evaluate(self, answer_payload: dict, retrieval: dict) -> dict:
         citations = answer_payload.get("citations") or []
-        need_human_handoff = bool(retrieval.get("need_human_handoff")) or not citations
+        has_memory_source = any(
+            citation.get("retrieval_source") == "memory" for citation in citations
+        )
+        need_human_handoff = not citations or (
+            bool(retrieval.get("need_human_handoff")) and not has_memory_source
+        )
         confidence = "low" if need_human_handoff else "medium"
         return {
             "need_human_handoff": need_human_handoff,
@@ -368,6 +497,13 @@ class AgentLoopService:
                 else "评估通过：回答至少包含一条可检索引用。"
             ),
         }
+
+    def _consume_run_tokens(self, run: AgentRun) -> None:
+        self.session_store.consume_token_budget(
+            run.user_id,
+            run.session_id,
+            int((run.token_usage or {}).get("total_tokens", 0)),
+        )
 
     def _trace(
         self,
@@ -427,6 +563,7 @@ def _run_payload(run: AgentRun, session_state: dict) -> dict:
     events = sorted(run.trace_events, key=lambda event: event.sequence)
     return {
         "id": run.id,
+        "user_id": run.user_id,
         "session_id": run.session_id,
         "question": run.question,
         "status": run.status,
@@ -436,6 +573,7 @@ def _run_payload(run: AgentRun, session_state: dict) -> dict:
         "citations": run.citations or [],
         "plan": run.plan or [],
         "retrieval_result": run.retrieval_result or {},
+        "memory_context": run.memory_context or [],
         "evaluation": run.evaluation or {},
         "token_usage": run.token_usage or {},
         "error_message": run.error_message,
@@ -492,6 +630,27 @@ def _citation_payload(index: int, item: dict) -> dict:
         "snippet": item.get("snippet") or "",
         "metadata": item.get("metadata") or {},
         "retrieval_source": item.get("retrieval_source"),
+    }
+
+
+def _memory_citation_payload(index: int, item: dict) -> dict:
+    return {
+        "id": f"M{index}",
+        "label": f"[M{index}]",
+        "memory_id": item.get("id"),
+        "memory_category": item.get("category"),
+        "document_id": item.get("source_document_id"),
+        "document_name": "长期记忆",
+        "chunk_id": None,
+        "chunk_index": None,
+        "page": None,
+        "heading": item.get("category"),
+        "score": item.get("score"),
+        "snippet": item.get("content") or "",
+        "metadata": item.get("metadata") or {},
+        "source_message_id": item.get("source_message_id"),
+        "source_document_id": item.get("source_document_id"),
+        "retrieval_source": "memory",
     }
 
 

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.database import get_db
-from app.services.agent_loop import AgentLoopService, RetrievalStrategy
+from app.services.agent_loop import AgentLimitExceeded, AgentLoopService, RetrievalStrategy
 from app.services.retrieval import RetrievalFilters
 
 
@@ -29,6 +29,7 @@ class AgentFiltersPayload(BaseModel):
 class AgentRunRequest(BaseModel):
     question: str | None = None
     message: str | None = None
+    user_id: str = Field(default="default", min_length=1, max_length=80)
     session_id: str | None = None
     strategy: RetrievalStrategy = "hybrid"
     top_k: int | None = Field(default=None, ge=1, le=50)
@@ -50,15 +51,22 @@ def create_agent_run(
         )
 
     service = AgentLoopService(settings)
-    return service.run(
-        db=db,
-        question=question,
-        session_id=_blank_to_none(request.session_id),
-        strategy=request.strategy,
-        top_k=request.top_k,
-        filters=_filters_from_payload(request.filters),
-        auto_approve=request.auto_approve,
-    )
+    try:
+        return service.run(
+            db=db,
+            question=question,
+            user_id=request.user_id.strip(),
+            session_id=_blank_to_none(request.session_id),
+            strategy=request.strategy,
+            top_k=request.top_k,
+            filters=_filters_from_payload(request.filters),
+            auto_approve=request.auto_approve,
+        )
+    except AgentLimitExceeded as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"message": "请求已达到短期记忆中的限额", **exc.limit_state},
+        ) from exc
 
 
 @router.get("/runs/{run_id}")
