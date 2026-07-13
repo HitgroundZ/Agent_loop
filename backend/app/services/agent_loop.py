@@ -357,7 +357,7 @@ class AgentLoopService:
     def _evaluate(self, answer_payload: dict, retrieval: dict) -> dict:
         citations = answer_payload.get("citations") or []
         need_human_handoff = bool(retrieval.get("need_human_handoff")) or not citations
-        confidence = "低" if need_human_handoff else "中"
+        confidence = "low" if need_human_handoff else "medium"
         return {
             "need_human_handoff": need_human_handoff,
             "confidence": confidence,
