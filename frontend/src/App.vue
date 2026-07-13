@@ -1,7 +1,7 @@
 <script setup>
-import WorkspaceView from './views/WorkspaceView.vue'
+import AppShell from './components/AppShell.vue'
 </script>
 
 <template>
-  <WorkspaceView />
+  <AppShell />
 </template>

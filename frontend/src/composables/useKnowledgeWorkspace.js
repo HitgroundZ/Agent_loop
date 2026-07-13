@@ -140,7 +140,7 @@ export function useKnowledgeWorkspace() {
       await fetchDocuments()
       await openDocument(data.id)
       selectedFile.value = null
-      const fileInput = document.querySelector('#document-file')
+      const fileInput = document.querySelector('#document-file, #document-file-module')
       if (fileInput) fileInput.value = ''
     } catch (error) {
       errorMessage.value = error.message
