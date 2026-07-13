@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import re
 
 
-PAGE_RE = re.compile(r"^\[Page\s+(\d+)\]\s*$", re.IGNORECASE)
+PAGE_RE = re.compile(r"^(?:\[Page\s+(\d+)\]|\[第\s*(\d+)\s*页\])\s*$", re.IGNORECASE)
 MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 PARAGRAPH_RE = re.compile(r"\n\s*\n+")
 
@@ -100,7 +100,7 @@ def _iter_blocks(text: str, heading_texts: set[str]) -> list[_Block]:
             line = raw_line.strip()
             page_match = PAGE_RE.match(line)
             if page_match:
-                current_page = int(page_match.group(1))
+                current_page = int(page_match.group(1) or page_match.group(2))
                 block_page = current_page
                 continue
             lines.append(raw_line.rstrip())

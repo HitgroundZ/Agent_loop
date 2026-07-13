@@ -43,7 +43,7 @@ class ObjectStorage:
                 self.client.remove_object(self.bucket, object_key)
             except S3Error as exc:
                 if exc.code not in {"NoSuchKey", "NoSuchBucket"}:
-                    logger.warning("failed to delete MinIO object %s: %s", object_key, exc)
+                    logger.warning("删除 MinIO 对象失败 %s：%s", object_key, exc)
 
 
 def get_object_storage(settings: Settings) -> ObjectStorage:

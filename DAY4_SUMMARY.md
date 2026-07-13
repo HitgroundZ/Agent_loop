@@ -1,8 +1,8 @@
-# Day 4 Agent Loop 状态机与 Trace 说明
+# 第 4 天智能体循环状态机与执行轨迹说明
 
 ## 完成范围
 
-本次实现了同步版 Agent run，用一次 `POST /api/agent/runs` 请求跑完整问答链路，并将状态、trace、Redis 会话缓存和前端展示串起来。
+本次实现了同步版智能体运行，用一次 `POST /api/agent/runs` 请求跑完整问答链路，并将状态、执行轨迹、Redis 会话缓存和前端展示串起来。
 
 状态流：
 
@@ -22,12 +22,12 @@ created -> analyzing -> retrieving -> acting -> waiting_approval -> evaluating -
 
 新增数据表：
 
-- `agent_runs`：保存一次 Agent run 的 session、问题、当前状态、答案、引用、临时 plan、检索结果、评估结果、token 统计、重试次数和错误。
+- `agent_runs`：保存一次智能体运行的会话、问题、当前状态、答案、引用、临时计划、检索结果、评估结果、令牌统计、重试次数和错误。
 - `agent_trace_events`：保存每个状态事件，包含 `input_payload`、`output_summary`、`output_payload`、`duration_ms`、`token_usage`、`error`、`retry_count`。
 
 新增 API：
 
-- `POST /api/agent/runs`：发起一次 Agent 问答。
+- `POST /api/agent/runs`：发起一次智能体问答。
 - `GET /api/agent/runs/{run_id}`：查看一次 run 的完整结果和 trace。
 - `GET /api/agent/sessions/{session_id}`：查看 Redis 中保存的会话快照。
 
@@ -38,8 +38,8 @@ created -> analyzing -> retrieving -> acting -> waiting_approval -> evaluating -
 
 回答策略：
 
-- Day4 采用抽取式 grounded answer：基于检索到的 chunk snippet 生成答案，并返回 citations。
-- 如果没有 citation，则进入 `escalated_to_human`，避免输出无依据答案。
+- 第 4 天采用抽取式有依据回答：基于检索到的切片摘要生成答案，并返回引用。
+- 如果没有引用，则进入 `escalated_to_human`，避免输出无依据答案。
 
 ## Redis 会话缓存
 
@@ -64,9 +64,9 @@ agent_loop:sessions:{session_id}
 
 ## 前端实现
 
-聊天页新增 `Day 4 / Agent Run` 面板：
+聊天页新增“第 4 天 / 智能体运行”面板：
 
-- 输入问题并发起 Agent run。
+- 输入问题并发起智能体运行。
 - 复用现有检索区域的 strategy、top_k、tenant、workspace、tags、principal 和当前文档过滤条件。
 - 展示当前状态、状态流、答案、引用、trace 简版。
 - 支持展开完整 `trace_events` JSON。
@@ -83,11 +83,10 @@ agent_loop:sessions:{session_id}
 - `POST /api/agent/runs` keyword 烟测通过：
   - 命中问题 `生态环境监测`
   - 状态流完整到 `completed`
-  - 返回 3 条 citations
+  - 返回 3 条引用
   - 写入 7 条 trace events
   - Redis session 可读取
 - 浏览器验收通过：
-  - 前端能提交 Agent run
+- 前端能提交智能体运行
   - 页面能看到 `completed`
-  - 页面能看到 Answer、Citations、Trace、created、retrieving、evaluating 等状态信息
-
+  - 页面能看到回答、引用来源、执行轨迹、created、retrieving、evaluating 等状态信息

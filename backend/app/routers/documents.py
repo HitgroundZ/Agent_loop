@@ -51,7 +51,7 @@ async def upload_document(
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail={
-                "message": "Unsupported document type",
+                "message": "不支持的文档类型",
                 "supported_extensions": sorted(SUPPORTED_EXTENSIONS),
             },
         )
@@ -60,7 +60,7 @@ async def upload_document(
     if len(content) > settings.max_upload_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File is larger than {settings.max_upload_bytes} bytes",
+            detail=f"文件大小超过限制：{settings.max_upload_bytes} 字节",
         )
 
     source_hash = sha256(content).hexdigest()
@@ -205,7 +205,7 @@ def list_documents(db: Session = Depends(get_db)) -> dict:
 def get_document(document_id: str, db: Session = Depends(get_db)) -> dict:
     document = db.get(Document, document_id)
     if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
     return _document_payload(document)
 
 
@@ -213,7 +213,7 @@ def get_document(document_id: str, db: Session = Depends(get_db)) -> dict:
 def list_document_chunks(document_id: str, db: Session = Depends(get_db)) -> dict:
     document = db.get(Document, document_id)
     if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
 
     chunks = db.scalars(
         select(DocumentChunk)
@@ -235,13 +235,13 @@ def retry_embedding_job(
 ) -> dict:
     document = db.get(Document, document_id)
     if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
 
     version = _latest_version(document)
     if not version:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Document has no parsed version")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="文档还没有解析版本")
     if not document.chunks:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Document has no chunks")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="文档还没有切片")
 
     job, should_enqueue = ensure_embedding_job(db, document, version, settings, retry_failed=True)
     if should_enqueue:
@@ -269,7 +269,7 @@ def delete_document(
 
     document = db.get(Document, document_id)
     if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
 
     object_keys = []
     for version in document.versions:
@@ -411,18 +411,18 @@ def _parse_permissions(raw_permissions: str | None) -> dict:
     except json.JSONDecodeError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="permissions must be a JSON object",
+            detail="permissions 必须是 JSON 对象",
         ) from exc
     if not isinstance(parsed, dict):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="permissions must be a JSON object",
+            detail="permissions 必须是 JSON 对象",
         )
     subjects = parsed.get("subjects")
     if subjects is not None and not isinstance(subjects, list):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="permissions.subjects must be a list when provided",
+            detail="permissions.subjects 必须是列表",
         )
     if isinstance(subjects, list):
         parsed["subjects"] = [str(subject).strip() for subject in subjects if str(subject).strip()]
@@ -438,7 +438,7 @@ def _get_idempotent_response(db: Session, key: str | None, scope: str) -> JSONRe
     if record.scope != scope:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Idempotency-Key was already used for a different operation",
+            detail="Idempotency-Key 已被其他操作使用",
         )
     return JSONResponse(status_code=record.status_code, content=record.response_json)
 

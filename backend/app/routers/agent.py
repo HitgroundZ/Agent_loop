@@ -46,7 +46,7 @@ def create_agent_run(
     if not question:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="question is required",
+            detail="问题不能为空",
         )
 
     service = AgentLoopService(settings)
@@ -71,7 +71,7 @@ def get_agent_run(
     try:
         return service.get_run(db, run_id)
     except KeyError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent run not found") from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="智能体运行不存在") from exc
 
 
 @router.get("/sessions/{session_id}")

@@ -1,11 +1,11 @@
 # Agent Loop 知识库 MVP
 
-当前版本完成到 Day 3：文档上传后会写入 MinIO、解析文本、自动切 chunk、创建 embedding job，并由 worker 异步调用千问向量模型写入 PostgreSQL pgvector；检索侧已支持 vector、keyword、hybrid 三种策略对比和 citations 返回。
+当前版本完成到 Day 3：文档上传后会写入 MinIO、解析文本、自动切片、创建向量化任务，并由 worker 异步调用千问向量模型写入 PostgreSQL pgvector；检索侧已支持向量检索、关键词检索、混合检索三种策略对比和引用返回。
 
 - FastAPI 后端：文档上传、哈希去重、MinIO 对象存储、chunk 查询、embedding job 重试、检索接口。
 - PostgreSQL：使用 `pgvector/pgvector:pg16`，保存 chunk 原文、`vector(1024)`、FTS `search_vector` 和 metadata filter 字段。
 - Worker：从 Redis 队列消费 embedding job，批量调用 `text-embedding-v4`。
-- Vue 3 前端：文档列表、状态展示、文本预览、chunk 文本/metadata/embedding 状态查看，以及检索结果/citations 对比。
+- Vue 3 前端：文档列表、状态展示、文本预览、切片文本、元数据、向量化状态查看，以及检索结果和引用对比。
 
 ## 运行
 
@@ -92,7 +92,7 @@ Day 1 的旧文档不会自动回填 chunk。若旧记录没有 MinIO object key
 }
 ```
 
-`strategy=keyword` 只依赖 PostgreSQL FTS/ILIKE；`strategy=vector` 和 `hybrid` 需要配置 `DASHSCOPE_API_KEY` 来生成 query embedding。当前 Day 3 不生成回答，只返回 citations；无可靠来源时 `need_human_handoff=true`。
+`strategy=keyword` 只依赖 PostgreSQL FTS/ILIKE；`strategy=vector` 和 `hybrid` 需要配置 `DASHSCOPE_API_KEY` 来生成查询向量。当前 Day 3 不生成回答，只返回引用；无可靠来源时 `need_human_handoff=true`。
 
 ## 数据库迁移
 
@@ -150,10 +150,10 @@ uvicorn app.main:app --reload
 - `document_chunks` 表有 chunk 数据，向量化成功后 `embedding` 不为空。
 - 删除文档后，对应版本、chunk、embedding job 和 MinIO 对象被清理。
 - 使用上传表单传入 tenant/workspace/tags/permissions 后，document 和 chunk 都会带上相同过滤字段。
-- 在前端检索区可分别运行 Vector、Keyword、Hybrid，也可以点击 Compare 同时对比三组结果。
-- 检索结果包含文档名、chunk 编号、页码/标题、score、snippet 和 metadata；无结果时显示 `need_human_handoff`。
+- 在前端检索区可分别运行向量检索、关键词检索、混合检索，也可以点击对比同时查看三组结果。
+- 检索结果包含文档名、切片编号、页码/标题、得分、摘要和元数据；无结果时显示“需人工处理”。
 
-如果没有配置 `DASHSCOPE_API_KEY`，worker 会保留任务重试状态，并在日志中提示 `DASHSCOPE_API_KEY is not configured`。
+如果没有配置 `DASHSCOPE_API_KEY`，worker 会保留任务重试状态，并在日志中提示“尚未配置 DASHSCOPE_API_KEY”。
 
 ## Windows 下的 Docker 说明
 

@@ -61,7 +61,7 @@ def enqueue_embedding_job(settings: Settings, job_id: str) -> bool:
         client.rpush(settings.redis_embedding_queue, job_id)
         return True
     except RedisError as exc:
-        logger.warning("embedding job %s was saved but not enqueued: %s", job_id, exc)
+        logger.warning("向量化任务 %s 已保存，但未能入队：%s", job_id, exc)
         return False
 
 

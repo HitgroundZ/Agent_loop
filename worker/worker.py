@@ -28,7 +28,7 @@ DASHSCOPE_BASE_URL = os.getenv(
 def main() -> None:
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
     redis = Redis.from_url(redis_url, decode_responses=True)
-    logging.info("embedding worker started")
+    logging.info("向量化 worker 已启动")
 
     while True:
         try:
@@ -38,10 +38,10 @@ def main() -> None:
             if item:
                 process_job(item[1])
         except RedisError as exc:
-            logging.warning("redis unavailable: %s", exc)
+            logging.warning("Redis 不可用：%s", exc)
             time.sleep(5)
         except Exception as exc:  # noqa: BLE001
-            logging.exception("worker loop failed: %s", exc)
+            logging.exception("worker 循环失败：%s", exc)
             time.sleep(5)
 
 
@@ -75,7 +75,7 @@ def enqueue_due_jobs(redis: Redis) -> None:
 
 
 def process_job(job_id: str) -> None:
-    logging.info("processing embedding job %s", job_id)
+    logging.info("正在处理向量化任务 %s", job_id)
     try:
         job, chunks = claim_job(job_id)
         if not job:
@@ -95,12 +95,12 @@ def process_job(job_id: str) -> None:
             )
             embeddings = [item.embedding for item in response.data]
             if len(embeddings) != len(batch):
-                raise RuntimeError("Embedding response size does not match request size")
+                raise RuntimeError("向量化响应数量与请求数量不一致")
             save_embeddings(batch, embeddings, job["embedding_model"], job["embedding_dim"])
 
         complete_job(job_id, job["document_id"])
     except Exception as exc:  # noqa: BLE001
-        logging.exception("embedding job %s failed: %s", job_id, exc)
+        logging.exception("向量化任务 %s 失败：%s", job_id, exc)
         fail_job(job_id, str(exc))
 
 
@@ -183,7 +183,7 @@ def save_embeddings(chunks: list[dict], embeddings: list[list[float]], model: st
         with conn.cursor() as cur:
             for chunk, embedding in zip(chunks, embeddings):
                 if len(embedding) != dim:
-                    raise RuntimeError(f"Embedding dimension mismatch: expected {dim}, got {len(embedding)}")
+                    raise RuntimeError(f"向量维度不匹配：期望 {dim}，实际 {len(embedding)}")
                 cur.execute(
                     """
                     UPDATE document_chunks
@@ -225,7 +225,7 @@ def complete_job(job_id: str, document_id: str) -> None:
                 (document_id,),
             )
         conn.commit()
-    logging.info("embedding job %s completed", job_id)
+    logging.info("向量化任务 %s 已完成", job_id)
 
 
 def fail_job(job_id: str, message: str) -> None:
@@ -283,7 +283,7 @@ def fail_job(job_id: str, message: str) -> None:
 def embedding_client() -> OpenAI:
     api_key = os.getenv("DASHSCOPE_API_KEY")
     if not api_key:
-        raise RuntimeError("DASHSCOPE_API_KEY is not configured")
+        raise RuntimeError("尚未配置 DASHSCOPE_API_KEY")
     return OpenAI(api_key=api_key, base_url=DASHSCOPE_BASE_URL)
 
 

@@ -23,7 +23,7 @@ def parse_file(path: Path, file_ext: str) -> ParsedDocument:
         return parse_markdown(path)
     if ext in {".html", ".htm"}:
         return parse_html(path)
-    raise ValueError(f"Unsupported document type: {file_ext}")
+    raise ValueError(f"不支持的文档类型：{file_ext}")
 
 
 def parse_pdf(path: Path) -> ParsedDocument:
@@ -38,13 +38,13 @@ def parse_pdf(path: Path) -> ParsedDocument:
         try:
             reader.decrypt("")
         except Exception as exc:  # noqa: BLE001
-            raise ValueError("PDF is encrypted and cannot be opened without a password") from exc
+            raise ValueError("PDF 已加密，无法在没有密码的情况下打开") from exc
 
     for index, page in enumerate(reader.pages, start=1):
         page_text = page.extract_text() or ""
         if not page_text.strip():
             empty_pages.append(index)
-        pages.append(f"[Page {index}]\n{page_text.strip()}")
+        pages.append(f"[第 {index} 页]\n{page_text.strip()}")
 
     text = _normalize_text("\n\n".join(pages))
     return ParsedDocument(
@@ -182,4 +182,3 @@ def _safe_metadata_value(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
-

@@ -279,7 +279,7 @@ async function compareRetrieval() {
 async function runAgent() {
   const question = agentQuestion.value.trim() || retrievalQuery.value.trim()
   if (!question) {
-    agentError.value = 'Enter a question'
+    agentError.value = '请输入问题'
     return
   }
 
@@ -310,7 +310,7 @@ async function runAgent() {
     })
     const data = await response.json()
     if (!response.ok) {
-      throw new Error(data.detail || 'Agent run failed')
+      throw new Error(data.detail || '智能体运行失败')
     }
     agentResult.value = data
     agentSessionId.value = data.session_id || sessionId
@@ -397,9 +397,9 @@ function splitList(value) {
 
 function strategyLabel(strategy) {
   const labels = {
-    vector: 'Vector',
-    keyword: 'Keyword',
-    hybrid: 'Hybrid'
+    vector: '向量检索',
+    keyword: '关键词检索',
+    hybrid: '混合检索'
   }
   return labels[strategy] || strategy
 }
@@ -416,12 +416,35 @@ function formatDuration(ms) {
 }
 
 function formatTokens(tokens) {
-  if (!tokens) return '0 tokens'
-  return `${tokens.total_tokens || 0} tokens`
+  if (!tokens) return '0 个令牌'
+  return `${tokens.total_tokens || 0} 个令牌`
 }
 
 function agentStateClass(state) {
   return state || 'unknown'
+}
+
+function agentStateLabel(state) {
+  const labels = {
+    created: '已创建',
+    analyzing: '分析中',
+    retrieving: '检索中',
+    acting: '生成回答',
+    waiting_approval: '等待审批',
+    evaluating: '评估中',
+    completed: '已完成',
+    failed: '失败',
+    escalated_to_human: '转人工'
+  }
+  return labels[state] || state
+}
+
+function roleLabel(role) {
+  const labels = {
+    user: '用户',
+    assistant: '助手'
+  }
+  return labels[role] || role
 }
 
 function statusLabel(status) {
@@ -488,19 +511,19 @@ function formatDate(value) {
         </div>
         <div class="form-grid upload-metadata">
           <label>
-            <span>Tenant</span>
+            <span>租户</span>
             <input v-model="uploadTenantId" type="text" placeholder="default" />
           </label>
           <label>
-            <span>Workspace</span>
+            <span>工作区</span>
             <input v-model="uploadWorkspaceId" type="text" placeholder="default" />
           </label>
           <label class="wide-field">
-            <span>Tags</span>
-            <input v-model="uploadTags" type="text" placeholder="tag1, tag2" />
+            <span>标签</span>
+            <input v-model="uploadTags" type="text" placeholder="标签1, 标签2" />
           </label>
           <label class="wide-field">
-            <span>Permissions JSON</span>
+            <span>权限 JSON</span>
             <textarea v-model="uploadPermissions" rows="2" placeholder='{"subjects":["team-a"]}'></textarea>
           </label>
         </div>
@@ -550,13 +573,13 @@ function formatDate(value) {
       <section class="panel agent-panel">
         <header class="agent-header">
           <div>
-            <p class="eyebrow">Day 4</p>
-            <h2>Agent Run</h2>
+            <p class="eyebrow">第 4 天</p>
+            <h2>智能体运行</h2>
           </div>
           <div class="agent-actions">
-            <input v-model="agentSessionId" type="text" placeholder="session id" />
+            <input v-model="agentSessionId" type="text" placeholder="会话 ID" />
             <button class="primary" :disabled="agentLoading" @click="runAgent">
-              {{ agentLoading ? 'Running' : 'Ask Agent' }}
+              {{ agentLoading ? '运行中' : '向智能体提问' }}
             </button>
           </div>
         </header>
@@ -565,7 +588,7 @@ function formatDate(value) {
           <input
             v-model="agentQuestion"
             type="text"
-            placeholder="Ask a question. Current retrieval filters will be reused."
+            placeholder="请输入问题，将复用当前检索过滤条件。"
             @keyup.enter="runAgent"
           />
         </div>
@@ -575,12 +598,12 @@ function formatDate(value) {
         <div v-if="agentResult" class="agent-output">
           <div class="agent-status-bar">
             <span class="status" :class="agentStateClass(agentResult.current_state)">
-              {{ agentResult.current_state }}
+              {{ agentStateLabel(agentResult.current_state) }}
             </span>
-            <span>run {{ agentResult.id }}</span>
-            <span>session {{ agentResult.session_id }}</span>
+            <span>运行 ID {{ agentResult.id }}</span>
+            <span>会话 ID {{ agentResult.session_id }}</span>
             <span>{{ formatTokens(agentResult.token_usage) }}</span>
-            <span>retry {{ agentResult.retry_count || 0 }}</span>
+            <span>重试 {{ agentResult.retry_count || 0 }}</span>
           </div>
 
           <div class="state-flow">
@@ -590,25 +613,25 @@ function formatDate(value) {
               class="state-chip"
               :class="agentStateClass(state)"
             >
-              {{ index + 1 }}. {{ state }}
+              {{ index + 1 }}. {{ agentStateLabel(state) }}
             </span>
           </div>
 
           <section class="agent-answer">
-            <h3>Answer</h3>
-            <pre>{{ agentResult.answer || 'No answer yet' }}</pre>
+            <h3>回答</h3>
+            <pre>{{ agentResult.answer || '暂无回答' }}</pre>
           </section>
 
           <section class="agent-citations">
-            <h3>Citations</h3>
-            <div v-if="agentCitations.length === 0" class="empty">No citations</div>
+            <h3>引用来源</h3>
+            <div v-if="agentCitations.length === 0" class="empty">暂无引用</div>
             <article v-for="item in agentCitations" :key="item.id" class="citation-row">
               <header>
                 <strong>{{ item.label }} {{ item.document_name }}</strong>
-                <span>Chunk {{ (item.chunk_index ?? 0) + 1 }}</span>
-                <span v-if="item.page">Page {{ item.page }}</span>
+                <span>切片 {{ (item.chunk_index ?? 0) + 1 }}</span>
+                <span v-if="item.page">第 {{ item.page }} 页</span>
                 <span v-if="item.heading">{{ item.heading }}</span>
-                <span>score {{ formatScore(item.score) }}</span>
+                <span>得分 {{ formatScore(item.score) }}</span>
               </header>
               <p>{{ item.snippet }}</p>
             </article>
@@ -616,20 +639,20 @@ function formatDate(value) {
 
           <section class="agent-trace">
             <div class="trace-title-row">
-              <h3>Trace</h3>
+              <h3>执行轨迹</h3>
               <button class="secondary compact-button" @click="agentTraceExpanded = !agentTraceExpanded">
-                {{ agentTraceExpanded ? 'Hide detail' : 'Show detail' }}
+                {{ agentTraceExpanded ? '收起详情' : '查看详情' }}
               </button>
             </div>
             <div class="trace-list">
               <article v-for="event in agentTracePreview" :key="event.sequence" class="trace-row">
                 <span class="state-chip" :class="agentStateClass(event.state)">
-                  {{ event.sequence }} {{ event.state }}
+                  {{ event.sequence }} {{ agentStateLabel(event.state) }}
                 </span>
                 <span>{{ event.output_summary }}</span>
                 <span>{{ formatDuration(event.duration_ms) }}</span>
                 <span>{{ formatTokens(event.token_usage) }}</span>
-                <span v-if="event.retry_count">retry {{ event.retry_count }}</span>
+                <span v-if="event.retry_count">重试 {{ event.retry_count }}</span>
                 <span v-if="event.error" class="trace-error">{{ event.error }}</span>
               </article>
             </div>
@@ -637,11 +660,11 @@ function formatDate(value) {
           </section>
 
           <section class="agent-session">
-            <h3>Recent Session Messages</h3>
-            <div v-if="agentSessionMessages.length === 0" class="empty">No cached messages</div>
+            <h3>最近会话消息</h3>
+            <div v-if="agentSessionMessages.length === 0" class="empty">暂无缓存消息</div>
             <div v-else class="message-list">
               <article v-for="message in agentSessionMessages" :key="`${message.run_id}-${message.role}-${message.created_at}`">
-                <strong>{{ message.role }}</strong>
+                <strong>{{ roleLabel(message.role) }}</strong>
                 <span>{{ message.content }}</span>
               </article>
             </div>
@@ -652,51 +675,51 @@ function formatDate(value) {
       <section class="panel retrieval-panel">
         <header class="retrieval-header">
           <div>
-            <p class="eyebrow">Retrieval</p>
+            <p class="eyebrow">检索</p>
             <h2>检索</h2>
           </div>
           <div class="retrieval-actions">
             <button class="secondary" :disabled="retrievalLoading" @click="compareRetrieval">
-              Compare
+              对比
             </button>
             <button class="primary" :disabled="retrievalLoading" @click="runRetrieval">
-              {{ retrievalLoading ? '检索中' : 'Search' }}
+              {{ retrievalLoading ? '检索中' : '检索' }}
             </button>
           </div>
         </header>
 
         <div class="retrieval-form">
           <label class="query-field">
-            <span>Query</span>
+            <span>问题</span>
             <input v-model="retrievalQuery" type="text" placeholder="输入问题或关键词" @keyup.enter="runRetrieval" />
           </label>
           <label>
-            <span>Strategy</span>
+            <span>检索策略</span>
             <select v-model="retrievalStrategy">
-              <option value="hybrid">Hybrid</option>
-              <option value="vector">Vector</option>
-              <option value="keyword">Keyword</option>
+              <option value="hybrid">混合检索</option>
+              <option value="vector">向量检索</option>
+              <option value="keyword">关键词检索</option>
             </select>
           </label>
           <label>
-            <span>Top K</span>
-            <input v-model="retrievalTopK" type="number" min="1" max="50" placeholder="auto" />
+            <span>返回数量</span>
+            <input v-model="retrievalTopK" type="number" min="1" max="50" placeholder="自动" />
           </label>
           <label>
-            <span>Tenant</span>
+            <span>租户</span>
             <input v-model="retrievalTenantId" type="text" placeholder="default" />
           </label>
           <label>
-            <span>Workspace</span>
+            <span>工作区</span>
             <input v-model="retrievalWorkspaceId" type="text" placeholder="default" />
           </label>
           <label>
-            <span>Tags</span>
-            <input v-model="retrievalTags" type="text" placeholder="tag1, tag2" />
+            <span>标签</span>
+            <input v-model="retrievalTags" type="text" placeholder="标签1, 标签2" />
           </label>
           <label>
-            <span>Principal</span>
-            <input v-model="retrievalPrincipal" type="text" placeholder="user/team" />
+            <span>身份</span>
+            <input v-model="retrievalPrincipal" type="text" placeholder="用户/团队" />
           </label>
           <label class="checkbox-line">
             <input v-model="retrievalUseSelectedDocument" type="checkbox" :disabled="!selectedDocument" />
@@ -712,11 +735,11 @@ function formatDate(value) {
               <div>
                 <h3>{{ group.title }}</h3>
                 <p class="muted">
-                  {{ group.result?.rewritten_query || '-' }} · top {{ group.result?.top_k || '-' }}
+                  {{ group.result?.rewritten_query || '-' }} · 前 {{ group.result?.top_k || '-' }} 条
                 </p>
               </div>
-              <span v-if="group.result?.need_human_handoff" class="status failed">need_human_handoff</span>
-              <span v-else class="status indexed">{{ group.result?.results?.length || 0 }} citations</span>
+              <span v-if="group.result?.need_human_handoff" class="status failed">需人工处理</span>
+              <span v-else class="status indexed">{{ group.result?.results?.length || 0 }} 条引用</span>
             </header>
             <p v-if="group.result?.diagnostics?.error" class="error">
               {{ group.result.diagnostics.error }}
@@ -727,10 +750,10 @@ function formatDate(value) {
               <article v-for="item in group.result.results" :key="`${group.key}-${item.chunk_id}`" class="citation-row">
                 <header>
                   <strong>{{ item.document_name }}</strong>
-                  <span>Chunk {{ item.chunk_index + 1 }}</span>
-                  <span v-if="item.page">Page {{ item.page }}</span>
+                  <span>切片 {{ item.chunk_index + 1 }}</span>
+                  <span v-if="item.page">第 {{ item.page }} 页</span>
                   <span v-if="item.heading">{{ item.heading }}</span>
-                  <span>score {{ formatScore(item.score) }}</span>
+                  <span>得分 {{ formatScore(item.score) }}</span>
                 </header>
                 <p>{{ item.snippet }}</p>
                 <pre>{{ JSON.stringify(item.metadata, null, 2) }}</pre>
@@ -773,7 +796,7 @@ function formatDate(value) {
                 <dd><span class="status" :class="selectedDocument.status">{{ statusLabel(selectedDocument.status) }}</span></dd>
               </div>
               <div>
-                <dt>Chunk 数量</dt>
+                <dt>切片数量</dt>
                 <dd>{{ selectedDocument.chunk_count || 0 }}</dd>
               </div>
               <div>
@@ -794,7 +817,7 @@ function formatDate(value) {
                 <dd class="summary-line">
                   <span>{{ selectedDocument.tenant_id || 'default' }}</span>
                   <span>{{ selectedDocument.workspace_id || 'default' }}</span>
-                  <span>{{ (selectedDocument.tags || []).join(', ') || 'no tags' }}</span>
+                  <span>{{ (selectedDocument.tags || []).join(', ') || '无标签' }}</span>
                 </dd>
               </div>
             </dl>
@@ -817,15 +840,15 @@ function formatDate(value) {
         </section>
 
         <section class="panel chunk-panel">
-          <h3>Chunks</h3>
+          <h3>切片</h3>
           <div v-if="chunksLoading" class="empty">加载 chunk 中</div>
-          <div v-else-if="selectedChunks.length === 0" class="empty">暂无 chunk</div>
+          <div v-else-if="selectedChunks.length === 0" class="empty">暂无切片</div>
           <template v-else>
             <article v-for="chunk in selectedChunks" :key="chunk.id" class="chunk-row">
               <header class="chunk-header">
                 <div>
-                  <strong>Chunk {{ chunk.chunk_index + 1 }}</strong>
-                  <span v-if="chunk.page">Page {{ chunk.page }}</span>
+                  <strong>切片 {{ chunk.chunk_index + 1 }}</strong>
+                  <span v-if="chunk.page">第 {{ chunk.page }} 页</span>
                   <span v-if="chunk.heading">{{ chunk.heading }}</span>
                 </div>
                 <span class="status" :class="chunk.embedding.status">
@@ -835,8 +858,8 @@ function formatDate(value) {
               <pre class="chunk-text">{{ chunk.text }}</pre>
               <div class="chunk-meta">
                 <span>{{ chunk.embedding.model || '未生成模型' }}</span>
-                <span>{{ chunk.embedding.dim || '-' }} dim</span>
-                <span>{{ chunk.embedding.has_vector ? 'vector ready' : 'no vector' }}</span>
+                <span>{{ chunk.embedding.dim || '-' }} 维</span>
+                <span>{{ chunk.embedding.has_vector ? '向量已生成' : '暂无向量' }}</span>
               </div>
               <pre class="chunk-json">{{ JSON.stringify(chunk.metadata, null, 2) }}</pre>
             </article>

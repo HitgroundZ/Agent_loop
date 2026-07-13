@@ -98,7 +98,7 @@ class RetrievalService:
             diagnostics["keyword_candidates"] = len(keyword_results)
             diagnostics["rrf_k"] = 60
         else:
-            raise ValueError(f"Unsupported retrieval strategy: {strategy}")
+            raise ValueError(f"不支持的检索策略：{strategy}")
 
         results, rerank_diagnostics = self.reranker.rerank(results, rerank)
         diagnostics["rerank"] = rerank_diagnostics
@@ -240,7 +240,7 @@ class RetrievalService:
 
     def _embed_query(self, query: str) -> list[float]:
         if not self.settings.dashscope_api_key:
-            raise RetrievalConfigurationError("DASHSCOPE_API_KEY is not configured")
+            raise RetrievalConfigurationError("尚未配置 DASHSCOPE_API_KEY")
         client = OpenAI(
             api_key=self.settings.dashscope_api_key,
             base_url=self.settings.dashscope_base_url,
@@ -254,7 +254,7 @@ class RetrievalService:
         embedding = response.data[0].embedding
         if len(embedding) != self.settings.embedding_dim:
             raise RetrievalConfigurationError(
-                f"Embedding dimension mismatch: expected {self.settings.embedding_dim}, got {len(embedding)}"
+                f"向量维度不匹配：期望 {self.settings.embedding_dim}，实际 {len(embedding)}"
             )
         return embedding
 

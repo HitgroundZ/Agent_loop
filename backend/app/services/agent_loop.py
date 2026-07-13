@@ -87,7 +87,7 @@ class AgentLoopService:
                     "top_k": top_k,
                     "auto_approve": auto_approve,
                 },
-                output_summary="Agent run created and user message stored in session cache.",
+                output_summary="已创建智能体运行，并将用户消息写入会话缓存。",
                 output_payload={"state_flow": STATE_FLOW, "terminal_states": sorted(TERMINAL_STATES)},
                 duration_ms=_duration_ms(start),
             )
@@ -119,11 +119,11 @@ class AgentLoopService:
             run.retry_count = max(run.retry_count or 0, retry_count)
             result_count = len(retrieval_payload.get("results") or [])
             retrieval_summary = (
-                f"Retrieved {result_count} citation candidates with "
-                f"{retrieval_payload.get('strategy', strategy)} strategy."
+                f"使用{_strategy_label(retrieval_payload.get('strategy', strategy))}"
+                f"检索到 {result_count} 条候选引用。"
             )
             if retry_count:
-                retrieval_summary += " Fallback retry was used."
+                retrieval_summary += " 已触发降级重试。"
             sequence = self._trace(
                 db,
                 run,
@@ -173,7 +173,7 @@ class AgentLoopService:
             approval_payload = {
                 "approval_required": not auto_approve,
                 "approved": bool(auto_approve),
-                "reason": "Read-only question answering run; no external side effects.",
+                "reason": "本次问答只读取知识库，不会产生外部副作用。",
             }
             sequence = self._trace(
                 db,
@@ -182,9 +182,9 @@ class AgentLoopService:
                 "waiting_approval",
                 input_payload={"auto_approve": auto_approve, "action_type": "answer"},
                 output_summary=(
-                    "Auto-approved read-only answer."
+                    "只读问答已自动通过审批。"
                     if auto_approve
-                    else "Run is waiting for explicit approval before evaluation."
+                    else "运行正在等待显式审批，审批后再进入评估。"
                 ),
                 output_payload=approval_payload,
                 duration_ms=_duration_ms(start),
@@ -221,9 +221,9 @@ class AgentLoopService:
                 terminal_state,
                 input_payload={"evaluation": evaluation},
                 output_summary=(
-                    "Run completed with grounded answer."
+                    "运行完成，已生成有引用支撑的回答。"
                     if terminal_state == "completed"
-                    else "Run escalated because no reliable citation was found."
+                    else "未找到可靠引用，运行已提交至人工处理。"
                 ),
                 output_payload={
                     "answer_preview": _shorten(run.answer or "", 500),
@@ -246,7 +246,7 @@ class AgentLoopService:
                 sequence,
                 "failed",
                 input_payload={"state": run.status, "question": _shorten(normalized_question, 500)},
-                output_summary=f"Agent run failed: {_shorten(str(exc), 500)}",
+                output_summary=f"智能体运行失败：{_shorten(str(exc), 500)}",
                 output_payload={},
                 duration_ms=0,
                 error=str(exc),
@@ -276,14 +276,14 @@ class AgentLoopService:
     ) -> dict:
         rewritten_query = _normalize_text(question)
         plan = [
-            {"step": "analyze", "status": "completed", "summary": "Normalize question and derive retrieval plan."},
-            {"step": "retrieve", "status": "pending", "summary": f"Search knowledge base with {strategy} strategy."},
-            {"step": "act", "status": "pending", "summary": "Draft an answer grounded in retrieved citations."},
-            {"step": "evaluate", "status": "pending", "summary": "Check whether the answer has enough source support."},
+            {"step": "analyze", "status": "completed", "summary": "规范化问题并生成检索计划。"},
+            {"step": "retrieve", "status": "pending", "summary": f"使用{_strategy_label(strategy)}检索知识库。"},
+            {"step": "act", "status": "pending", "summary": "基于检索引用生成回答。"},
+            {"step": "evaluate", "status": "pending", "summary": "检查回答是否有足够来源支撑。"},
         ]
         filter_payload = _filters_payload(filters)
         return {
-            "summary": f"Question normalized to {len(rewritten_query)} chars; {strategy} retrieval planned.",
+            "summary": f"问题已规范化为 {len(rewritten_query)} 个字符；计划使用{_strategy_label(strategy)}检索。",
             "rewritten_query": rewritten_query,
             "requested_strategy": strategy,
             "top_k": top_k,
@@ -332,13 +332,13 @@ class AgentLoopService:
         citations = [_citation_payload(index, item) for index, item in enumerate(results[:5], start=1)]
         if not citations:
             return {
-                "answer": "I could not find enough reliable source material in the knowledge base. This run should be handed to a human for confirmation.",
+                "answer": "没有可靠信息来源，提交至人工处理。",
                 "citations": [],
-                "summary": "No grounded answer generated because retrieval returned no citation candidates.",
+                "summary": "检索未返回候选引用，未生成有来源支撑的回答。",
             }
 
         answer_lines = [
-            "Based on the retrieved knowledge-base material, the grounded answer is:",
+            "根据知识库中检索到的资料，回答如下：",
             "",
         ]
         for citation in citations[:3]:
@@ -347,25 +347,25 @@ class AgentLoopService:
             snippet = _shorten(citation["snippet"], 360)
             answer_lines.append(f"{label}. {source}: {snippet}")
         answer_lines.append("")
-        answer_lines.append("Citations are attached below so the answer can be checked against the source chunks.")
+        answer_lines.append("引用来源已附在下方，可对照原始切片核验。")
         return {
             "answer": "\n".join(answer_lines),
             "citations": citations,
-            "summary": f"Generated extractive grounded answer with {len(citations)} citations for: {_shorten(question, 120)}",
+            "summary": f"已基于 {len(citations)} 条引用生成抽取式回答：{_shorten(question, 120)}",
         }
 
     def _evaluate(self, answer_payload: dict, retrieval: dict) -> dict:
         citations = answer_payload.get("citations") or []
         need_human_handoff = bool(retrieval.get("need_human_handoff")) or not citations
-        confidence = "low" if need_human_handoff else "medium"
+        confidence = "低" if need_human_handoff else "中"
         return {
             "need_human_handoff": need_human_handoff,
             "confidence": confidence,
             "citation_count": len(citations),
             "summary": (
-                "Evaluation failed grounding threshold; human handoff required."
+                "评估未达到来源支撑阈值，需要人工处理。"
                 if need_human_handoff
-                else "Evaluation passed: answer has at least one retrievable citation."
+                else "评估通过：回答至少包含一条可检索引用。"
             ),
         }
 
@@ -509,6 +509,15 @@ def _filters_payload(filters: RetrievalFilters | None) -> dict:
         "principal": filters.principal,
         "permission_subjects": filters.permission_subjects or [],
     }
+
+
+def _strategy_label(strategy: str | None) -> str:
+    labels = {
+        "hybrid": "混合策略",
+        "vector": "向量策略",
+        "keyword": "关键词策略",
+    }
+    return labels.get(strategy or "", strategy or "默认策略")
 
 
 def _estimate_token_usage(input_payload: Any, output_payload: Any) -> dict:
