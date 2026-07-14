@@ -11,7 +11,7 @@ from app.config import Settings
 from app.models import ConversationMessage, Document, LongTermMemory, new_id
 from app.services.agent_session_store import AgentSessionStore
 
-
+# 长期记忆
 MEMORY_CATEGORIES = {
     "event_summary",
     "scene",
@@ -54,6 +54,7 @@ class MemoryService:
         db.refresh(message)
         return message
 
+    # 从一次问答生成长期记忆
     def persist_run_memories(
         self,
         db: Session,
@@ -94,6 +95,7 @@ class MemoryService:
                 metadata_json={**common_metadata, "kind": "conversation_scene"},
             ),
         ]
+        # 判断是否属于用户画像
         if _looks_like_profile_fact(question):
             memories.append(
                 LongTermMemory(
@@ -109,9 +111,9 @@ class MemoryService:
         db.commit()
         for memory in memories:
             db.refresh(memory)
-        self.short_term.invalidate_memory_cache(user_id)
+        self.short_term.invalidate_memory_cache(user_id)                    # 清理缓存
         return memories
-
+    # 检索长期记忆
     def search(
         self,
         db: Session,
@@ -148,7 +150,7 @@ class MemoryService:
         used_chars = 0
         seen_content: set[str] = set()
         for score, memory in scored:
-            fingerprint = _normalize(memory.content)
+            fingerprint = _normalize(memory.content)                        # 内容去重
             if fingerprint in seen_content:
                 continue
             if selected and used_chars + len(memory.content) > self.settings.memory_context_max_chars:
@@ -185,7 +187,7 @@ class MemoryService:
         }
         self.short_term.set_memory_cache(user_id, session_id, normalized_query, payload)
         return payload
-
+    # 用于查看长期记忆
     def list_memories(
         self,
         db: Session,
@@ -229,7 +231,7 @@ class MemoryService:
             "items": [_message_payload(message) for message in messages],
             "count": len(messages),
         }
-
+    # 人工创建记忆
     def create_memory(
         self,
         db: Session,
@@ -340,7 +342,7 @@ class MemoryService:
             )
         }
 
-
+# 通过计算共同词的数量来判断是否相关的
 def _relevance_score(
     normalized_query: str,
     query_terms: set[str],

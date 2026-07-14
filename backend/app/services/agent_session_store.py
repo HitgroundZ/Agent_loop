@@ -1,3 +1,6 @@
+"""
+Agent Loop 的 Redis 状态管理器
+"""
 from __future__ import annotations
 
 from copy import deepcopy
