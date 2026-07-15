@@ -11,7 +11,10 @@ DATABASE_URL = os.getenv(
     "postgresql+psycopg://agent_loop:agent_loop@127.0.0.1:5432/agent_loop",
 )
 INSPECT_USER_ID = os.getenv("MEMORY_INSPECT_USER_ID", "day5-structure-demo")
-TABLES = ("agent_runs", "conversation_messages", "long_term_memories")
+TABLES = (
+    "agent_runs", "conversation_messages", "long_term_memories",
+    "tool_actions", "tool_outbox",
+)
 
 
 def main() -> None:
@@ -41,6 +44,12 @@ def main() -> None:
                     f"  {foreign_key['constrained_columns']} -> "
                     f"{foreign_key['referred_table']}.{foreign_key['referred_columns']}"
                 )
+            print("unique constraints:")
+            unique_constraints = inspector.get_unique_constraints(table_name)
+            if not unique_constraints:
+                print("  (none)")
+            for constraint in unique_constraints:
+                print(f"  {constraint.get('name')} columns={constraint.get('column_names')}")
 
         with engine.connect() as connection:
             revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
@@ -64,6 +73,26 @@ def main() -> None:
                 print(dict(row))
             if not found:
                 print("  (none; run tests/seed_day5_memory_demo.py first)")
+
+            actions = connection.execute(
+                text(
+                    """
+                    SELECT id, run_id, tool_name, risk_level, permission, status,
+                           attempt_count, left(arguments_summary, 100) AS arguments_summary,
+                           created_at
+                    FROM tool_actions
+                    ORDER BY created_at DESC
+                    LIMIT 20
+                    """
+                )
+            ).mappings()
+            print("\nRecent tool actions:")
+            found = False
+            for row in actions:
+                found = True
+                print(dict(row))
+            if not found:
+                print("  (none; run a high-risk Agent request first)")
     finally:
         engine.dispose()
 

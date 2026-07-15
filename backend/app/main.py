@@ -8,6 +8,7 @@ from app.routers.agent import router as agent_router
 from app.routers.documents import router as documents_router
 from app.routers.memories import router as memories_router
 from app.routers.retrieval import router as retrieval_router
+from app.routers.tool_actions import router as tool_actions_router
 
 
 settings = get_settings()
@@ -26,6 +27,7 @@ app.include_router(documents_router)
 app.include_router(retrieval_router)
 app.include_router(agent_router)
 app.include_router(memories_router)
+app.include_router(tool_actions_router)
 
 # 健康状态测试路由
 @app.get("/api/health")

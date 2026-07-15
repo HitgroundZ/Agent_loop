@@ -1,11 +1,11 @@
 # Agent Loop 知识库 MVP
 
-当前版本完成到 Day 5：在文档入库、混合检索和 Day 4 智能体 trace 的基础上，新增 Redis 短期记忆、PostgreSQL 用户级长期记忆、跨会话选择性召回，以及可启停、删除、纠错和追溯原文的前端记忆管理。
+当前版本完成 Day 5 / Day 6 合并交付：在文档入库、混合检索和 Day 4 trace 的基础上，加入长短期记忆、LLM Function Calling、统一 Tool Registry、真实 rerank、风险策略、幂等人工审批和自动续跑。
 
 - FastAPI 后端：文档上传、哈希去重、MinIO 对象存储、chunk 查询、embedding job 重试、检索接口。
 - PostgreSQL：使用 `pgvector/pgvector:pg16`，保存 chunk 原文、`vector(1024)`、FTS `search_vector` 和 metadata filter 字段。
 - Worker：从 Redis 队列消费 embedding job，批量调用 `text-embedding-v4`。
-- Vue 3 前端：文档列表、状态展示、文本预览、切片文本、元数据、向量化状态查看，以及检索结果和引用对比。
+- Vue 3 前端：总览、Agent、审批台、长期记忆、知识库和检索实验室六个独立模块。
 
 ## 运行
 
@@ -76,6 +76,10 @@ Day 1 的旧文档不会自动回填 chunk。若旧记录没有 MinIO object key
 - `POST /api/agent/runs`
 - `GET /api/agent/runs/{run_id}`
 - `GET /api/agent/sessions/{session_id}`
+- `GET /api/tool-actions`
+- `GET /api/tool-actions/{action_id}`
+- `POST /api/tool-actions/{action_id}/approve`
+- `POST /api/tool-actions/{action_id}/reject`
 - `GET /api/memories?user_id={user_id}`
 - `GET /api/memories/messages?user_id={user_id}`
 - `PATCH /api/memories/{memory_id}`
@@ -102,6 +106,35 @@ Day 1 的旧文档不会自动回填 chunk。若旧记录没有 MinIO object key
 
 `strategy=keyword` 只依赖 PostgreSQL FTS/ILIKE；`strategy=vector` 和 `hybrid` 需要配置 `DASHSCOPE_API_KEY` 来生成查询向量。当前 Day 3 不生成回答，只返回引用；无可靠来源时 `need_human_handoff=true`。
 
+Agent 请求示例（模型自行判断是否检索）：
+
+```json
+{
+  "question": "请记住我是一名 AI 工程师，并且偏好简洁回答。",
+  "user_id": "demo-user",
+  "session_id": "session-a",
+  "strategy": "hybrid",
+  "retrieval_mode": "auto",
+  "top_k": 5,
+  "auto_approve": true
+}
+```
+
+`retrieval_mode` 可为 `auto | always | never`。`auto_approve` 不能绕过高风险审批。审批接口必须同时携带服务端映射为 approver 的 `X-Principal-Id` 和幂等键：
+
+```powershell
+$headers = @{
+  'X-Principal-Id' = 'demo-user'
+  'Idempotency-Key' = [guid]::NewGuid().ToString()
+}
+Invoke-RestMethod `
+  -Uri 'http://localhost:8000/api/tool-actions/<action_id>/approve' `
+  -Method Post `
+  -Headers $headers `
+  -ContentType 'application/json' `
+  -Body '{"reason":"已确认目标与影响"}'
+```
+
 ## 数据库迁移
 
 项目使用 Alembic 管理数据库表结构。启动完整服务时，`migrate` 服务会先执行：
@@ -120,8 +153,21 @@ alembic upgrade head
 当前迁移版本应为：
 
 ```text
-202607060001
+202607070001
 ```
+
+本地角色、模型、rerank 和 Webhook 安全边界均通过 `.env` 配置。`TOOL_ROLE_ASSIGNMENTS` 只在服务端读取；不要把角色或权限放入 Agent 请求体。
+
+## Day 5 / Day 6 验收测试
+
+```powershell
+docker-compose build backend
+docker-compose run --rm backend python -m unittest discover -s tests -v
+cd frontend
+npm run build
+```
+
+真实 DashScope 测试默认跳过；明确需要时设置 `RUN_DASHSCOPE_INTEGRATION=1` 和 `DASHSCOPE_API_KEY` 后单独运行。结构和数据检查方式见 [backend/tests/README.md](./backend/tests/README.md)，实现总结见 [DAY5_SUMMARY.md](./DAY5_SUMMARY.md) 与 [DAY6_SUMMARY.md](./DAY6_SUMMARY.md)。
 
 ## 本地运行后端
 

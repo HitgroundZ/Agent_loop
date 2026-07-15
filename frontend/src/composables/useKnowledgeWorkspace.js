@@ -34,10 +34,20 @@ export function useKnowledgeWorkspace() {
   const agentQuestion = ref('')
   const agentUserId = ref('demo-user')
   const agentSessionId = ref('')
+  const agentRetrievalMode = ref('auto')
   const agentLoading = ref(false)
   const agentError = ref('')
   const agentResult = ref(null)
   const agentTraceExpanded = ref(false)
+  const approvalActions = ref([])
+  const approvalStatusFilter = ref('pending')
+  const approvalLoading = ref(false)
+  const approvalError = ref('')
+  const approvalDecisionLoading = ref('')
+  const approvalDetails = ref({})
+  const pendingApprovalCount = ref(0)
+
+  const approvalRequestKeys = new Map()
 
   let pollingTimer = null
 
@@ -75,9 +85,11 @@ export function useKnowledgeWorkspace() {
   const agentMemoryContext = computed(() => agentResult.value?.memory_context || [])
   const agentSessionMessages = computed(() => agentResult.value?.session_state?.recent_messages || [])
   const agentShortTermState = computed(() => agentResult.value?.session_state || {})
+  const agentToolActions = computed(() => agentResult.value?.tool_actions || [])
+  const agentRoutingDecision = computed(() => agentResult.value?.routing_decision || {})
 
   onMounted(async () => {
-    await Promise.all([checkHealth(), fetchDocuments()])
+    await Promise.all([checkHealth(), fetchDocuments(), fetchToolActions(true)])
     pollingTimer = window.setInterval(refreshActiveWork, 3000)
   })
 
@@ -251,6 +263,7 @@ export function useKnowledgeWorkspace() {
         question,
         user_id: agentUserId.value.trim(),
         strategy: retrievalStrategy.value,
+        retrieval_mode: agentRetrievalMode.value,
         filters: buildRetrievalFilters(),
         auto_approve: true
       }
@@ -262,10 +275,83 @@ export function useKnowledgeWorkspace() {
       agentResult.value = data
       agentSessionId.value = data.session_id || sessionId
       agentQuestion.value = question
+      if (data.current_state === 'waiting_approval') await fetchToolActions(true)
     } catch (error) {
       agentError.value = error.message
     } finally {
       agentLoading.value = false
+    }
+  }
+
+  async function fetchToolActions(silent = false) {
+    approvalLoading.value = true
+    if (!silent) approvalError.value = ''
+    try {
+      const params = new URLSearchParams({ limit: '200' })
+      if (approvalStatusFilter.value) params.set('status', approvalStatusFilter.value)
+      const headers = { 'X-Principal-Id': agentUserId.value.trim() || 'demo-user' }
+      const pendingRequest = approvalStatusFilter.value === 'pending'
+        ? null
+        : apiRequest('/api/tool-actions?status=pending&limit=1', { headers })
+      const [data, pendingData] = await Promise.all([
+        apiRequest(`/api/tool-actions?${params}`, { headers }),
+        pendingRequest
+      ])
+      approvalActions.value = data.items || []
+      pendingApprovalCount.value = pendingData?.count ?? (
+        approvalStatusFilter.value === 'pending' ? data.count || 0 : pendingApprovalCount.value
+      )
+    } catch (error) {
+      if (!silent) approvalError.value = error.message
+      approvalActions.value = []
+      pendingApprovalCount.value = 0
+    } finally {
+      approvalLoading.value = false
+    }
+  }
+
+  async function decideToolAction(action, decision, reason = '') {
+    const requestId = `${action.id}:${decision}`
+    const idempotencyKey = approvalRequestKeys.get(requestId) || makeIdempotencyKey()
+    approvalRequestKeys.set(requestId, idempotencyKey)
+    approvalDecisionLoading.value = requestId
+    approvalError.value = ''
+    try {
+      const data = await apiRequest(`/api/tool-actions/${action.id}/${decision}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+          'X-Principal-Id': agentUserId.value.trim() || 'demo-user'
+        },
+        body: JSON.stringify({ reason: reason.trim() || null })
+      })
+      if (data.run && (!agentResult.value || data.run.id === agentResult.value.id)) {
+        agentResult.value = data.run
+        agentSessionId.value = data.run.session_id || agentSessionId.value
+      }
+      await fetchToolActions(true)
+      return data
+    } catch (error) {
+      approvalError.value = error.message
+      throw error
+    } finally {
+      approvalRequestKeys.delete(requestId)
+      approvalDecisionLoading.value = ''
+    }
+  }
+
+  async function fetchToolActionDetail(actionId) {
+    approvalError.value = ''
+    try {
+      const data = await apiRequest(`/api/tool-actions/${actionId}`, {
+        headers: { 'X-Principal-Id': agentUserId.value.trim() || 'demo-user' }
+      })
+      approvalDetails.value = { ...approvalDetails.value, [actionId]: data }
+      return data
+    } catch (error) {
+      approvalError.value = error.message
+      throw error
     }
   }
 
@@ -391,13 +477,18 @@ export function useKnowledgeWorkspace() {
     uploadTags, uploadPermissions, retrievalQuery, retrievalStrategy, retrievalTopK,
     retrievalTenantId, retrievalWorkspaceId, retrievalTags, retrievalPrincipal,
     retrievalUseSelectedDocument, retrievalLoading, retrievalError, retrievalResult,
-    compareResult, agentQuestion, agentUserId, agentSessionId, agentLoading, agentError,
-    agentResult, agentTraceExpanded, indexedCount, processingCount, failedCount,
+    compareResult, agentQuestion, agentUserId, agentSessionId, agentRetrievalMode,
+    agentLoading, agentError, agentResult, agentTraceExpanded, approvalActions,
+    approvalStatusFilter, approvalLoading, approvalError, approvalDecisionLoading,
+    approvalDetails,
+    indexedCount, processingCount, failedCount,
     selectedEmbeddingSummary, selectedHasFailedEmbedding, displayedRetrievalGroups,
     agentTracePreview, agentCitations, agentMemoryContext, agentSessionMessages,
-    agentShortTermState, pickFile, uploadDocument, openDocument, retryEmbedding,
+    agentShortTermState, agentToolActions, agentRoutingDecision, pendingApprovalCount,
+    pickFile, uploadDocument, openDocument, retryEmbedding,
     deleteSelected, runRetrieval, compareRetrieval, runAgent, strategyLabel, formatScore,
     formatDuration, formatTokens, agentStateClass, agentStateLabel, memoryCategoryLabel,
-    roleLabel, statusLabel, formatBytes, formatDate
+    roleLabel, statusLabel, formatBytes, formatDate, fetchToolActions, decideToolAction,
+    fetchToolActionDetail
   }
 }

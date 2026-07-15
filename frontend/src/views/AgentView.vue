@@ -5,9 +5,11 @@ import { useWorkspaceContext } from '../composables/workspaceContext'
 
 
 const {
-  agentQuestion, agentSessionId, agentLoading, agentError, agentResult, agentTraceExpanded,
+  agentQuestion, agentSessionId, agentRetrievalMode, agentLoading, agentError,
+  agentResult, agentTraceExpanded,
   agentTracePreview, agentCitations, agentMemoryContext, agentSessionMessages,
-  agentShortTermState, runAgent, formatScore, formatDuration, formatTokens,
+  agentShortTermState, agentToolActions, agentRoutingDecision, runAgent,
+  formatScore, formatDuration, formatTokens,
   agentStateClass, agentStateLabel, memoryCategoryLabel, roleLabel
 } = useWorkspaceContext()
 
@@ -15,9 +17,23 @@ const activeResultTab = ref('answer')
 const resultTabs = [
   { id: 'answer', label: '回答与引用' },
   { id: 'memory', label: '本轮记忆' },
+  { id: 'tools', label: '工具与审批' },
   { id: 'trace', label: '执行轨迹' },
   { id: 'session', label: '会话缓存' }
 ]
+
+function toolStatusLabel(status) {
+  return {
+    proposed: '已提出', pending: '待审批', running: '执行中', executed: '已执行',
+    rejected: '已拒绝', failed: '失败', blocked: '已阻断'
+  }[status] || status
+}
+
+function retrievalDecisionLabel(value) {
+  return {
+    pending: '待决策', skipped: '已跳过', executed: '已检索', failed: '检索失败'
+  }[value] || value || '未记录'
+}
 </script>
 
 <template>
@@ -26,7 +42,7 @@ const resultTabs = [
       <div class="composer-copy">
         <span class="section-index">智能体入口</span>
         <h2>发起一次可追溯问答</h2>
-        <p>系统会先召回当前用户的相关记忆，再检索知识库并记录完整状态轨迹。</p>
+        <p>模型按需选择记忆或知识库工具；安全策略会在副作用执行前校验权限与风险。</p>
       </div>
       <div class="composer-fields">
         <label class="question-field">
@@ -36,6 +52,14 @@ const resultTabs = [
         <label>
           <span>会话 ID</span>
           <input v-model="agentSessionId" type="text" placeholder="留空时创建新会话" />
+        </label>
+        <label>
+          <span>知识库模式</span>
+          <select v-model="agentRetrievalMode">
+            <option value="auto">Auto · 模型判断</option>
+            <option value="always">Always · 强制检索</option>
+            <option value="never">Never · 禁止检索</option>
+          </select>
         </label>
         <button class="primary run-agent-button" :disabled="agentLoading" @click="runAgent">
           {{ agentLoading ? '正在运行' : '运行智能体' }}
@@ -71,6 +95,26 @@ const resultTabs = [
         <div><span>Rate limit</span><strong>{{ agentShortTermState.rate_limit?.remaining ?? '-' }} / {{ agentShortTermState.rate_limit?.limit ?? '-' }}</strong></div>
         <div><span>Token budget</span><strong>{{ agentShortTermState.token_budget?.remaining ?? '-' }} / {{ agentShortTermState.token_budget?.limit ?? '-' }}</strong></div>
       </section>
+
+      <section class="routing-decision-strip">
+        <div>
+          <span>路由来源</span>
+          <strong>{{ agentRoutingDecision.source || '-' }}</strong>
+        </div>
+        <div>
+          <span>知识库决策</span>
+          <strong>{{ retrievalDecisionLabel(agentRoutingDecision.knowledge_retrieval) }}</strong>
+        </div>
+        <div class="routing-reason">
+          <span>决策理由</span>
+          <strong>{{ agentRoutingDecision.reason || '暂无' }}</strong>
+        </div>
+      </section>
+
+      <div v-if="agentResult.current_state === 'waiting_approval'" class="waiting-approval-banner">
+        <strong>运行已暂停，等待人工审批</strong>
+        <span>请前往“审批台”处理 {{ agentToolActions.filter((item) => item.status === 'pending').length }} 个 action；全部处理后会自动续跑。</span>
+      </div>
 
       <nav class="content-tabs" aria-label="运行结果导航">
         <button v-for="tab in resultTabs" :key="tab.id" :class="{ active: activeResultTab === tab.id }" @click="activeResultTab = tab.id">
@@ -136,6 +180,26 @@ const resultTabs = [
           <pre v-if="agentTraceExpanded" class="trace-json">{{ JSON.stringify(agentResult.trace_events, null, 2) }}</pre>
         </template>
 
+        <template v-else-if="activeResultTab === 'tools'">
+          <div v-if="agentToolActions.length === 0" class="empty spacious-empty">模型没有调用任何工具</div>
+          <div v-else class="agent-tool-list">
+            <article v-for="action in agentToolActions" :key="action.id">
+              <header>
+                <div>
+                  <strong>{{ action.tool_name }}</strong>
+                  <span class="risk-badge" :class="action.risk_level">{{ action.risk_level }}</span>
+                  <span class="action-status" :class="action.status">{{ toolStatusLabel(action.status) }}</span>
+                </div>
+                <small>{{ action.permission }} · {{ action.attempt_count }} 次执行</small>
+              </header>
+              <p>{{ action.reason }}</p>
+              <code>{{ action.arguments_summary }}</code>
+              <pre v-if="Object.keys(action.result || {}).length">{{ JSON.stringify(action.result, null, 2) }}</pre>
+              <p v-if="action.error" class="error">{{ action.error }}</p>
+            </article>
+          </div>
+        </template>
+
         <template v-else>
           <div v-if="agentSessionMessages.length === 0" class="empty spacious-empty">暂无 Redis 会话消息</div>
           <div v-else class="message-list session-module-list">
@@ -150,7 +214,7 @@ const resultTabs = [
     <section v-else class="module-card empty-workspace">
       <span class="empty-illustration">◎</span>
       <h3>尚未运行智能体</h3>
-      <p>输入问题后，这里会按模块展示回答、记忆、轨迹和会话缓存。</p>
+      <p>输入问题后，这里会按模块展示回答、工具决策、记忆、轨迹和会话缓存。</p>
     </section>
   </div>
 </template>

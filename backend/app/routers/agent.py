@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.database import get_db
-from app.services.agent_loop import AgentLimitExceeded, AgentLoopService, RetrievalStrategy
+from app.services.agent_loop import (
+    AgentLimitExceeded,
+    AgentLoopService,
+    RetrievalMode,
+    RetrievalStrategy,
+)
 from app.services.retrieval import RetrievalFilters
 
 
@@ -32,6 +37,7 @@ class AgentRunRequest(BaseModel):
     user_id: str = Field(default="default", min_length=1, max_length=80)
     session_id: str | None = None
     strategy: RetrievalStrategy = "hybrid"
+    retrieval_mode: RetrievalMode = "auto"
     top_k: int | None = Field(default=None, ge=1, le=50)
     filters: AgentFiltersPayload | None = None
     auto_approve: bool = True
@@ -58,6 +64,7 @@ def create_agent_run(
             user_id=request.user_id.strip(),
             session_id=_blank_to_none(request.session_id),
             strategy=request.strategy,
+            retrieval_mode=request.retrieval_mode,
             top_k=request.top_k,
             filters=_filters_from_payload(request.filters),
             auto_approve=request.auto_approve,

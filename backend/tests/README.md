@@ -1,50 +1,49 @@
-# Day 5 长期记忆测试
+# Day 5 / Day 6 数据库与 Agent 测试
 
-这组测试针对真实 PostgreSQL/Redis，不使用 SQLite 替代 PostgreSQL JSONB、索引和外键行为。
+测试连接真实 PostgreSQL 和 Redis，不用 SQLite 替代 JSONB、行锁、唯一约束与跨会话缓存行为。外部模型、rerank 和 Webhook 在默认测试中使用 fake/mock。
 
-## 测试案例
+## 自动化案例
 
-`test_day5_memory.py` 包含两个可重复执行并自动清理的测试：
+`test_day5_memory.py`：
 
-1. `test_schema_contract`
-   - 断言 Alembic revision 为 `202607060001`。
-   - 断言 `agent_runs`、`conversation_messages`、`long_term_memories` 存在。
-   - 核对长期记忆字段、非空约束、索引和原始消息外键。
-   - 核对 `agent_runs.user_id` 与 `agent_runs.memory_context`。
-2. `test_memory_lifecycle_and_cross_session_recall`
-   - 在 session A 写入原始用户消息。
-   - 自动生成事件摘要、场景记忆和用户画像。
-   - 在 session B 召回并核对 `source_message_id` 与原文。
-   - 创建人工纠错，核对 `parent_memory_id`。
-   - 禁用全部记忆后验证召回结果为 0。
-   - 删除纠错记忆，并确认原始对话仍存在。
+- 核对 revision `202607070001`、长期记忆字段、索引与来源约束。
+- 验证原子画像写入、跨 session 召回、人工纠错、禁用与删除。
+- 验证来源消息保留，普通会话记忆的 `source_document_id` 为空。
 
-运行测试：
+`test_day6_tools.py`：
+
+- 核对 `agent_runs` 路由字段、`tool_actions`、`tool_outbox` 和唯一约束。
+- 显式记忆不调用知识库，并拆为两条 `user_profile`。
+- 记忆跨会话仅调用 `search_user_memory` 并使用 `[M1]`。
+- 隐式记忆进入审批且审批前不写入。
+- 高风险发送审批前无副作用，批准后自动续跑；重复幂等请求只产生一条 Outbox。
+- 无权限工具不暴露，文档上下文不能扩张副作用授权。
+- `qwen3-rerank` 阈值过滤与未配置时 fail-closed。
+- Webhook 白名单、私网阻断、禁止重定向、超时、响应截断和敏感结果脱敏。
+
+`test_dashscope_optional.py`：
+
+- 默认跳过。
+- 显式设置 `RUN_DASHSCOPE_INTEGRATION=1` 与 `DASHSCOPE_API_KEY` 后验证真实 `qwen3.7-max` 和 `qwen3-rerank` 连通性。
+
+运行：
 
 ```powershell
-docker-compose up -d --build backend
-docker exec agent-loop-backend-1 python -m unittest discover -s tests -p "test_*.py" -v
+docker-compose build backend
+docker-compose run --rm backend python -m unittest discover -s tests -v
 ```
 
-## 生成可保留的 demo 数据
-
-自动化测试会清理自身数据。如果希望在数据库中保留一组方便人工查看的记录，运行：
+## 生成可查看的长期记忆 demo
 
 ```powershell
 docker exec agent-loop-backend-1 python -m tests.seed_day5_memory_demo
 ```
 
-脚本只重建固定用户 `day5-structure-demo`，会生成：
+脚本只重建 `day5-structure-demo`，生成两个 session、原始 user/assistant 消息、两条原子用户画像和一条人工纠错。会话事实仅写 `source_message_id`，不会为了演示而错误关联任意文档。
 
-- 两个不同 session 的 `agent_runs`。
-- 用户和助手原始对话。
-- `event_summary`、`scene`、`user_profile`、`human_correction` 四类长期记忆。
-- 已禁用的原画像、启用的人工核验记录及 `parent_memory_id`；核验只修正文案，不凭空改变用户事实。
-- `source_message_id`，数据库已有文档时也会写入一个 `source_document_id` 示例。
+## 检查表结构和数据
 
-## 查看表结构和 demo 数据
-
-结构化 Python 输出：
+结构化输出（包含 `tool_actions` 与 `tool_outbox`）：
 
 ```powershell
 docker exec agent-loop-backend-1 python -m tests.inspect_day5_memory
@@ -56,4 +55,4 @@ docker exec agent-loop-backend-1 python -m tests.inspect_day5_memory
 Get-Content -Raw backend/tests/sql/inspect_day5_memory.sql | docker exec -i agent-loop-postgres-1 psql -U agent_loop -d agent_loop
 ```
 
-前端记忆管理页面也可直接把用户 ID 切换为 `day5-structure-demo` 查看这些记录。
+前端切换到 `day5-structure-demo` 可查看记忆；切换到服务端配置为 approver 的用户（默认 `demo-user`）可进入审批台查看 action。

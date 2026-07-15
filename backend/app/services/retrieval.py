@@ -3,6 +3,7 @@ from datetime import datetime
 import re
 from typing import Any, Literal
 
+import httpx
 from openai import OpenAI
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -47,12 +48,88 @@ class TopKPolicy:
         return 12
 
 
-class NoopReranker:
-    def rerank(self, results: list[dict], enabled: bool) -> tuple[list[dict], dict]:
-        return results, {
-            "rerank_requested": bool(enabled),
-            "rerank_applied": False,
-            "rerank_model": None,
+class DashScopeReranker:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    def rerank(
+        self,
+        query: str,
+        results: list[dict],
+        *,
+        enabled: bool,
+        top_k: int,
+    ) -> tuple[list[dict], dict]:
+        if not enabled:
+            return results[:top_k], {
+                "rerank_requested": False,
+                "rerank_applied": False,
+                "rerank_model": None,
+            }
+        if not results:
+            return [], {
+                "rerank_requested": True,
+                "rerank_applied": True,
+                "rerank_model": self.settings.rerank_model,
+                "candidate_count": 0,
+                "accepted_count": 0,
+                "min_score": self.settings.rerank_min_score,
+            }
+        if not self.settings.dashscope_api_key:
+            raise RetrievalConfigurationError("rerank 未配置 DASHSCOPE_API_KEY")
+
+        url = (
+            self.settings.dashscope_http_base_url.rstrip("/")
+            + "/services/rerank/text-rerank/text-rerank"
+        )
+        payload = {
+            "model": self.settings.rerank_model,
+            "query": query,
+            "documents": [item.get("snippet") or "" for item in results],
+            "top_n": min(top_k, len(results)),
+            "return_documents": False,
+            "instruct": "Given a knowledge-base question, retrieve passages that directly answer it.",
+        }
+        try:
+            response = httpx.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {self.settings.dashscope_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=self.settings.rerank_timeout_seconds,
+                follow_redirects=False,
+            )
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise RetrievalConfigurationError(f"rerank 调用失败：{exc}") from exc
+
+        ranked_items = body.get("results") or (body.get("output") or {}).get("results") or []
+        ranked: list[dict] = []
+        for rank, item in enumerate(ranked_items, start=1):
+            index = item.get("index")
+            if not isinstance(index, int) or index < 0 or index >= len(results):
+                continue
+            score = float(item.get("relevance_score") or 0.0)
+            if score < self.settings.rerank_min_score:
+                continue
+            candidate = dict(results[index])
+            candidate["retrieval_score"] = candidate.get("score")
+            candidate["rerank_score"] = score
+            candidate["score"] = score
+            candidate["rank"] = rank
+            ranked.append(candidate)
+
+        return ranked[:top_k], {
+            "rerank_requested": True,
+            "rerank_applied": True,
+            "rerank_model": self.settings.rerank_model,
+            "candidate_count": len(results),
+            "accepted_count": len(ranked[:top_k]),
+            "min_score": self.settings.rerank_min_score,
+            "usage": body.get("usage") or {},
         }
 
 
@@ -61,7 +138,7 @@ class RetrievalService:
         self.settings = settings
         self.rewriter = QueryRewriter()
         self.top_k_policy = TopKPolicy()
-        self.reranker = NoopReranker()
+        self.reranker = DashScopeReranker(settings)
 
     def search(
         self,
@@ -74,6 +151,7 @@ class RetrievalService:
     ) -> dict:
         rewritten_query = self.rewriter.rewrite(query)
         resolved_top_k = self.top_k_policy.resolve(rewritten_query, top_k)
+        candidate_limit = max(resolved_top_k * 4, 20) if rerank else resolved_top_k
         filters = filters or RetrievalFilters()
 
         diagnostics: dict[str, Any] = {
@@ -84,23 +162,27 @@ class RetrievalService:
             return self._response(query, rewritten_query, strategy, resolved_top_k, [], diagnostics)
 
         if strategy == "vector":
-            results = self._vector_search(db, rewritten_query, filters, resolved_top_k)
+            results = self._vector_search(db, rewritten_query, filters, candidate_limit)
             diagnostics["vector_candidates"] = len(results)
         elif strategy == "keyword":
-            results = self._keyword_search(db, rewritten_query, filters, resolved_top_k)
+            results = self._keyword_search(db, rewritten_query, filters, candidate_limit)
             diagnostics["keyword_candidates"] = len(results)
         elif strategy == "hybrid":
-            candidate_limit = max(resolved_top_k * 4, 20)
             vector_results = self._vector_search(db, rewritten_query, filters, candidate_limit)
             keyword_results = self._keyword_search(db, rewritten_query, filters, candidate_limit)
-            results = self._rrf(vector_results, keyword_results, resolved_top_k)
+            results = self._rrf(vector_results, keyword_results, candidate_limit)
             diagnostics["vector_candidates"] = len(vector_results)
             diagnostics["keyword_candidates"] = len(keyword_results)
             diagnostics["rrf_k"] = 60
         else:
             raise ValueError(f"不支持的检索策略：{strategy}")
 
-        results, rerank_diagnostics = self.reranker.rerank(results, rerank)
+        results, rerank_diagnostics = self.reranker.rerank(
+            rewritten_query,
+            results,
+            enabled=rerank,
+            top_k=resolved_top_k,
+        )
         diagnostics["rerank"] = rerank_diagnostics
         return self._response(query, rewritten_query, strategy, resolved_top_k, results, diagnostics)
 

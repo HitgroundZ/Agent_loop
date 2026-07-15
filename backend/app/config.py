@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     agent_rate_limit_requests: int = 60
     agent_rate_limit_window_seconds: int = 60
     agent_token_budget: int = 12000
+    agent_tool_max_rounds: int = 3
+    agent_llm_timeout_seconds: float = 30.0
     memory_retrieval_limit: int = 5                                                                 # 最多选择多少条记忆
     memory_candidate_limit: int = 200                                                               # 最多从数据库取多少候选记忆
     memory_context_max_chars: int = 2400                                                            # 最多注入多少字符
@@ -31,13 +33,21 @@ class Settings(BaseSettings):
     minio_secure: bool = False
     dashscope_api_key: str | None = None
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    dashscope_http_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
     llm_model: str = "qwen3.7-max"
-    rerank_model: str = "qwen3-vl-rerank"
+    rerank_model: str = "qwen3-rerank"
+    rerank_min_score: float = 0.35
+    rerank_timeout_seconds: float = 15.0
     embedding_model: str = "text-embedding-v4"
     embedding_dim: int = 1024
     embedding_batch_size: int = 10
     chunk_max_chars: int = 1800
     chunk_overlap_chars: int = 200
+    tool_default_roles: str = "user"
+    tool_role_assignments: str = '{"demo-user":["operator","approver"]}'
+    tool_webhook_allowed_hosts: str = ""
+    tool_webhook_timeout_seconds: float = 10.0
+    tool_webhook_max_response_bytes: int = 64 * 1024
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -49,6 +59,14 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def tool_default_role_list(self) -> list[str]:
+        return [role.strip() for role in self.tool_default_roles.split(",") if role.strip()]
+
+    @property
+    def tool_webhook_allowed_host_list(self) -> list[str]:
+        return [host.strip().lower() for host in self.tool_webhook_allowed_hosts.split(",") if host.strip()]
 
     # 加载文件属性
     @property

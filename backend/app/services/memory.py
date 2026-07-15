@@ -54,65 +54,88 @@ class MemoryService:
         db.refresh(message)
         return message
 
-    # 从一次问答生成长期记忆
-    def persist_run_memories(
+    def save_tool_memories(
         self,
         db: Session,
         *,
         user_id: str,
         session_id: str,
         run_id: str,
-        question: str,
-        answer: str,
         source_message_id: str,
-        citations: list[dict],
+        candidates: list[dict],
+        citation_catalog: dict[str, dict] | None = None,
+        require_document_citation: bool = False,
     ) -> list[LongTermMemory]:
-        source_document_id = next(
-            (item.get("document_id") for item in citations if item.get("document_id")),
-            None,
-        )
-        common_metadata = {"session_id": session_id, "run_id": run_id, "generated": True}
-        memories = [
-            LongTermMemory(
-                id=new_id(),
-                user_id=user_id,
-                category="event_summary",
-                content=(
-                    f"用户询问：{_shorten(question, 320)}\n"
-                    f"处理结果：{_shorten(answer, 520)}"
-                ),
-                source_message_id=source_message_id,
-                source_document_id=source_document_id,
-                metadata_json={**common_metadata, "kind": "agent_run_summary"},
-            ),
-            LongTermMemory(
-                id=new_id(),
-                user_id=user_id,
-                category="scene",
-                content=f"用户在会话中提到或询问：{_shorten(question, 520)}",
-                source_message_id=source_message_id,
-                source_document_id=source_document_id,
-                metadata_json={**common_metadata, "kind": "conversation_scene"},
-            ),
-        ]
-        # 判断是否属于用户画像
-        if _looks_like_profile_fact(question):
-            memories.append(
-                LongTermMemory(
-                    id=new_id(),
-                    user_id=user_id,
-                    category="user_profile",
-                    content=f"用户明确表达：{_shorten(question, 520)}",
-                    source_message_id=source_message_id,
-                    metadata_json={**common_metadata, "kind": "explicit_user_fact"},
+        """保存经过工具策略批准的原子长期记忆，不从任意 citation 猜测来源。"""
+        source = db.get(ConversationMessage, source_message_id)
+        if source is None or source.user_id != user_id or source.run_id != run_id:
+            raise ValueError("记忆来源消息不存在或不属于当前运行")
+
+        catalog = citation_catalog or {}
+        existing = list(
+            db.scalars(
+                select(LongTermMemory).where(
+                    LongTermMemory.user_id == user_id,
+                    LongTermMemory.enabled.is_(True),
                 )
             )
-        db.add_all(memories)
-        db.commit()
-        for memory in memories:
-            db.refresh(memory)
-        self.short_term.invalidate_memory_cache(user_id)                    # 清理缓存
-        return memories
+        )
+        fingerprints = {
+            (memory.category, _normalize(memory.content)) for memory in existing
+        }
+        created: list[LongTermMemory] = []
+        for candidate in candidates:
+            category = str(candidate.get("category") or "").strip()
+            content = re.sub(r"\s+", " ", str(candidate.get("content") or "")).strip()
+            if category not in MEMORY_CATEGORIES - {"human_correction"}:
+                raise ValueError(f"自动工具不允许创建记忆类型：{category or '-'}")
+            if not content:
+                raise ValueError("记忆内容不能为空")
+
+            fingerprint = (category, _normalize(content))
+            if fingerprint in fingerprints:
+                continue
+
+            citation_id = str(candidate.get("citation_id") or "").strip()
+            source_document_id: str | None = None
+            evidence: dict = {}
+            if require_document_citation and not citation_id:
+                raise ValueError("文档衍生记忆必须提供一个本轮有效的文档 citation")
+            if citation_id:
+                citation = catalog.get(citation_id)
+                if not citation or citation.get("retrieval_source") == "memory":
+                    raise ValueError("文档衍生记忆必须引用本轮唯一有效的文档 citation")
+                source_document_id = citation.get("document_id")
+                if not source_document_id:
+                    raise ValueError("citation 未包含可追溯的 document_id")
+                evidence = {"citation_id": citation_id, "chunk_id": citation.get("chunk_id")}
+
+            memory = LongTermMemory(
+                id=new_id(),
+                user_id=user_id,
+                category=category,
+                content=content,
+                source_message_id=source_message_id,
+                source_document_id=source_document_id,
+                metadata_json={
+                    "session_id": session_id,
+                    "run_id": run_id,
+                    "generated": True,
+                    "kind": "tool_selected_memory",
+                    "reason": str(candidate.get("reason") or "").strip(),
+                    **evidence,
+                },
+            )
+            db.add(memory)
+            created.append(memory)
+            fingerprints.add(fingerprint)
+
+        if created:
+            db.commit()
+            for memory in created:
+                db.refresh(memory)
+            self.short_term.invalidate_memory_cache(user_id)
+        return created
     # 检索长期记忆
     def search(
         self,
@@ -245,6 +268,8 @@ class MemoryService:
     ) -> dict:
         if category not in MEMORY_CATEGORIES:
             raise ValueError("不支持的记忆类型")
+        if category == "human_correction":
+            raise ValueError("human_correction 只能通过人工纠错接口创建")
         if not source_message_id and not source_document_id:
             raise ValueError("长期记忆必须包含 source_message_id 或 source_document_id")
         if source_message_id:
@@ -253,6 +278,21 @@ class MemoryService:
                 raise ValueError("来源消息不存在或不属于该用户")
         if source_document_id and db.get(Document, source_document_id) is None:
             raise ValueError("来源文档不存在")
+        normalized_content = _normalize(content)
+        existing = list(db.scalars(
+            select(LongTermMemory).where(
+                LongTermMemory.user_id == user_id,
+                LongTermMemory.category == category,
+                LongTermMemory.enabled.is_(True),
+            )
+        ))
+        duplicate = next(
+            (memory for memory in existing if _normalize(memory.content) == normalized_content),
+            None,
+        )
+        if duplicate is not None:
+            source = db.get(ConversationMessage, duplicate.source_message_id) if duplicate.source_message_id else None
+            return _memory_payload(duplicate, source)
         memory = LongTermMemory(
             id=new_id(),
             user_id=user_id,

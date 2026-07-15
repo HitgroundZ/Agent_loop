@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import engine
-from app.models import AgentRun, Document, LongTermMemory, new_id
+from app.models import AgentRun, LongTermMemory, new_id
 from app.services.memory import MemoryService
+from app.services.tooling import extract_memory_candidates
 
 
 DEMO_USER_ID = "day5-structure-demo"
@@ -24,7 +25,6 @@ def main() -> None:
         db.commit()
         service.short_term.invalidate_memory_cache(DEMO_USER_ID)
 
-        source_document = db.scalar(select(Document).order_by(Document.created_at).limit(1))
         run_a = AgentRun(
             id=new_id(),
             user_id=DEMO_USER_ID,
@@ -52,19 +52,14 @@ def main() -> None:
             role="assistant",
             content=run_a.answer or "",
         )
-        generated = service.persist_run_memories(
+        generated = service.save_tool_memories(
             db,
             user_id=DEMO_USER_ID,
             session_id=SESSION_A,
             run_id=run_a.id,
-            question=run_a.question,
-            answer=run_a.answer or "",
             source_message_id=user_message.id,
-            citations=(
-                [{"document_id": source_document.id}]
-                if source_document is not None
-                else []
-            ),
+            candidates=extract_memory_candidates(run_a.question),
+            citation_catalog={},
         )
         profile = next(memory for memory in generated if memory.category == "user_profile")
         correction = service.correct(
@@ -105,7 +100,7 @@ def main() -> None:
         )
         db.add(run_b)
         db.commit()
-        message_b = service.record_message(
+        service.record_message(
             db,
             user_id=DEMO_USER_ID,
             session_id=SESSION_B,
@@ -121,17 +116,6 @@ def main() -> None:
             role="assistant",
             content=run_b.answer or "",
         )
-        service.persist_run_memories(
-            db,
-            user_id=DEMO_USER_ID,
-            session_id=SESSION_B,
-            run_id=run_b.id,
-            question=run_b.question,
-            answer=run_b.answer or "",
-            source_message_id=message_b.id,
-            citations=run_b.citations,
-        )
-
         memory_count = len(
             list(db.scalars(select(LongTermMemory).where(LongTermMemory.user_id == DEMO_USER_ID)))
         )

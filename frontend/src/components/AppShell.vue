@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import { provideWorkspaceContext } from '../composables/workspaceContext'
 import AgentView from '../views/AgentView.vue'
+import ApprovalView from '../views/ApprovalView.vue'
 import KnowledgeView from '../views/KnowledgeView.vue'
 import MemoryView from '../views/MemoryView.vue'
 import OverviewView from '../views/OverviewView.vue'
@@ -13,6 +14,7 @@ const workspace = provideWorkspaceContext()
 const modules = [
   { id: 'overview', label: '总览', shortLabel: '总览', glyph: '⌂', component: OverviewView, description: '系统状态与工作入口' },
   { id: 'agent', label: '智能体', shortLabel: 'Agent', glyph: '◎', component: AgentView, description: '运行问答、查看引用与执行轨迹' },
+  { id: 'approval', label: '审批台', shortLabel: '审批', glyph: '✓', component: ApprovalView, description: '审查高风险工具调用并安全续跑' },
   { id: 'memory', label: '长期记忆', shortLabel: '记忆', glyph: '◇', component: MemoryView, description: '查看、禁用、纠错与追溯用户记忆' },
   { id: 'knowledge', label: '知识库', shortLabel: '文档', glyph: '▤', component: KnowledgeView, description: '上传文档并管理切片和向量状态' },
   { id: 'retrieval', label: '检索实验室', shortLabel: '检索', glyph: '⌕', component: RetrievalView, description: '测试向量、关键词与混合检索' }
@@ -61,6 +63,9 @@ function navigate(moduleId) {
         >
           <span class="nav-glyph">{{ item.glyph }}</span>
           <span class="nav-label">{{ item.label }}</span>
+          <span v-if="item.id === 'approval' && workspace.pendingApprovalCount.value" class="nav-count">
+            {{ workspace.pendingApprovalCount.value }}
+          </span>
         </button>
       </nav>
 
@@ -68,7 +73,7 @@ function navigate(moduleId) {
         <span class="service-indicator" :class="workspace.health.value">
           <i></i>{{ workspace.health.value === 'ok' ? '服务正常' : '服务异常' }}
         </span>
-        <small>Day 5 · Memory</small>
+        <small>Day 5 + 6 · Tools</small>
       </div>
     </aside>
 
@@ -100,6 +105,9 @@ function navigate(moduleId) {
         >
           <span>{{ item.glyph }}</span>
           <small>{{ item.shortLabel }}</small>
+          <i v-if="item.id === 'approval' && workspace.pendingApprovalCount.value" class="mobile-nav-count">
+            {{ workspace.pendingApprovalCount.value }}
+          </i>
         </button>
       </nav>
     </section>

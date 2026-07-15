@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.models import AgentRun, ConversationMessage, LongTermMemory, new_id
 from app.services.memory import MemoryService, _looks_like_profile_fact
+from app.services.tooling import extract_memory_candidates
 
 
 DATABASE_URL = os.getenv(
@@ -102,14 +103,19 @@ class Day5MemoryIntegrationTest(unittest.TestCase):
         self.assertEqual(["run_id"], message_foreign_keys[0]["constrained_columns"])
 
         run_columns = {column["name"] for column in self.inspector.get_columns("agent_runs")}
-        self.assertTrue({"user_id", "memory_context"}.issubset(run_columns))
+        self.assertTrue(
+            {
+                "user_id", "memory_context", "retrieval_mode", "routing_decision",
+                "continuation_context",
+            }.issubset(run_columns)
+        )
 
         # 来源 ID 是稳定追溯标识，不设级联外键，避免源文档删除时被自动置空。
         self.assertEqual([], self.inspector.get_foreign_keys("long_term_memories"))
 
         with Session(self.engine) as db:
             revision = db.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        self.assertEqual("202607060001", revision)
+        self.assertEqual("202607070001", revision)
 
     def test_profile_fact_does_not_treat_a_question_as_a_fact(self) -> None:
         self.assertTrue(_looks_like_profile_fact("请记住我喜欢手冲咖啡。"))
@@ -142,24 +148,25 @@ class Day5MemoryIntegrationTest(unittest.TestCase):
                 role="user",
                 content=question,
             )
-            generated = service.persist_run_memories(
+            generated = service.save_tool_memories(
                 db,
                 user_id=self.user_id,
                 session_id=self.session_ids[0],
                 run_id=run.id,
-                question=question,
-                answer=run.answer or "",
                 source_message_id=source_message.id,
-                citations=[],
+                candidates=extract_memory_candidates(question),
+                citation_catalog={},
             )
 
             self.assertEqual(
-                {"event_summary", "scene", "user_profile"},
+                {"user_profile"},
                 {memory.category for memory in generated},
             )
+            self.assertEqual(2, len(generated))
             self.assertTrue(
                 all(memory.source_message_id == source_message.id for memory in generated)
             )
+            self.assertTrue(all(memory.source_document_id is None for memory in generated))
 
             recalled = service.search(
                 db,
@@ -175,7 +182,7 @@ class Day5MemoryIntegrationTest(unittest.TestCase):
             )
             self.assertEqual(question, recalled["items"][0]["source_message"]["content"])
 
-            profile = next(memory for memory in generated if memory.category == "user_profile")
+            profile = next(memory for memory in generated if "手冲咖啡" in memory.content)
             correction = service.correct(
                 db,
                 profile.id,

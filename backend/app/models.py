@@ -149,6 +149,9 @@ class AgentRun(Base):
     question: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="created", index=True)
     retrieval_strategy: Mapped[str] = mapped_column(String(20), nullable=False, default="hybrid")
+    retrieval_mode: Mapped[str] = mapped_column(String(12), nullable=False, default="auto")
+    routing_decision: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    continuation_context: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     citations: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
     plan: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
@@ -172,6 +175,12 @@ class AgentRun(Base):
         back_populates="run",
         cascade="all, delete-orphan",
         order_by="ConversationMessage.created_at",
+    )
+
+    tool_actions: Mapped[list["ToolAction"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="ToolAction.created_at",
     )
 
 
@@ -214,6 +223,68 @@ class ConversationMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     run: Mapped[AgentRun] = relationship(back_populates="messages")
+
+
+class ToolAction(Base):
+    """模型提出的工具动作及其风险、审批和执行审计。"""
+
+    __tablename__ = "tool_actions"
+    __table_args__ = (
+        UniqueConstraint("run_id", "tool_call_id", name="uq_tool_actions_run_tool_call"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tool_call_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    arguments: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    arguments_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    execution_context: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    permission: Mapped[str] = mapped_column(String(80), nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    side_effect: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="proposed", index=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    authorization_source: Mapped[str] = mapped_column(String(40), nullable=False, default="user_message")
+    authorization_evidence: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    requested_by: Mapped[str] = mapped_column(String(80), nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    decision_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    run: Mapped[AgentRun] = relationship(back_populates="tool_actions")
+    outbox_item: Mapped["ToolOutbox"] = relationship(
+        back_populates="action", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class ToolOutbox(Base):
+    """审批通过后的发送动作先进入 Outbox，由后续 worker 对接真实渠道。"""
+
+    __tablename__ = "tool_outbox"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    action_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_actions.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    channel: Mapped[str] = mapped_column(String(40), nullable=False)
+    recipient: Mapped[str] = mapped_column(String(255), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    action: Mapped[ToolAction] = relationship(back_populates="outbox_item")
 
 
 class LongTermMemory(Base):

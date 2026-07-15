@@ -24,6 +24,7 @@ from app.models import (
 )
 from app.services.chunking import build_chunks
 from app.services.embedding_jobs import ensure_embedding_job, enqueue_embedding_job
+from app.services.documents import delete_document_resource
 from app.services.parsers import SUPPORTED_EXTENSIONS, parse_file
 from app.services.storage import get_object_storage
 
@@ -271,17 +272,8 @@ def delete_document(
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
 
-    object_keys = []
-    for version in document.versions:
-        if version.source_object_key:
-            object_keys.append(version.source_object_key)
-        if version.extracted_text_object_key:
-            object_keys.append(version.extracted_text_object_key)
-
-    payload = {"deleted": True, "document_id": document.id}
-    db.delete(document)
-    db.commit()
-    get_object_storage(settings).delete_many(object_keys)
+    payload = delete_document_resource(db, settings, document.id)
+    payload.pop("already_deleted", None)
 
     return _store_and_return(db, idempotency_key, "documents.delete", payload, status.HTTP_200_OK)
 
