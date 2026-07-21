@@ -1908,6 +1908,47 @@ body {
   background: #f7f9fa;
 }
 
+.sandbox-result-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #cde2df;
+  border-radius: 9px;
+  background: #f5fbfa;
+}
+
+.sandbox-result-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sandbox-result-facts span {
+  display: grid;
+  gap: 3px;
+}
+
+.sandbox-result-facts small,
+.sandbox-policy-line {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.sandbox-stream {
+  display: grid;
+  gap: 5px;
+}
+
+.sandbox-stream > strong {
+  color: #17623f;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.sandbox-stream.error-stream > strong {
+  color: #96352b;
+}
+
 .risk-badge,
 .action-status {
   display: inline-flex;
@@ -2790,6 +2831,10 @@ body {
   }
 
   .short-term-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sandbox-result-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

@@ -1,10 +1,11 @@
 # Agent Loop 知识库 MVP
 
-当前版本完成 Day 5 / Day 6 合并交付：在文档入库、混合检索和 Day 4 trace 的基础上，加入长短期记忆、LLM Function Calling、统一 Tool Registry、真实 rerank、风险策略、幂等人工审批和自动续跑。
+当前版本已完成 Day 7 最终交付：在文档入库、混合检索、长短期记忆、LLM Function Calling、统一 Tool Registry、真实 rerank、风险策略和幂等人工审批之上，加入独立 Docker 命令沙箱。Agent 明确需要执行命令时，会创建无网络、只读、受资源限制的一次性容器，记录日志后立即销毁。
 
 - FastAPI 后端：文档上传、哈希去重、MinIO 对象存储、chunk 查询、embedding job 重试、检索接口。
 - PostgreSQL：使用 `pgvector/pgvector:pg16`，保存 chunk 原文、`vector(1024)`、FTS `search_vector` 和 metadata filter 字段。
 - Worker：从 Redis 队列消费 embedding job，批量调用 `text-embedding-v4`。
+- Sandbox service：通过 Docker SDK 创建一次性容器执行结构化命令；只有该服务能够访问 Docker socket。
 - Vue 3 前端：总览、Agent、审批台、长期记忆、知识库和检索实验室六个独立模块。
 
 ## 运行
@@ -158,16 +159,36 @@ alembic upgrade head
 
 本地角色、模型、rerank 和 Webhook 安全边界均通过 `.env` 配置。`TOOL_ROLE_ASSIGNMENTS` 只在服务端读取；不要把角色或权限放入 Agent 请求体。
 
-## Day 5 / Day 6 验收测试
+## Day 7 Docker 沙箱
+
+沙箱只执行 Agent 提出的单次命令，不运行整个 RAG Agent，也不挂载项目代码或宿主目录。首版工具使用结构化 `argv`，例如：
+
+```text
+请在 Docker 沙箱执行命令 argv: ["python","-c","print(6*7)"]
+```
+
+固定安全边界包括：无网络、非 root、只读根目录、临时 `/workspace` 与 `/tmp`、0.5 CPU、128 MiB 内存、64 PID、5 秒超时、命令 allowlist/denylist 和环境变量白名单。`DASHSCOPE_API_KEY`、token、secret 和 Docker socket 都不会进入执行容器。
+
+详细架构、执行时序、安全参数和故障排查见 [DAY7_SUMMARY.md](./DAY7_SUMMARY.md)。
+
+## Day 5 / Day 6 / Day 7 验收测试
 
 ```powershell
-docker-compose build backend
+docker-compose build sandbox-service backend
+docker-compose run --rm sandbox-service python -m unittest discover -s tests -v
 docker-compose run --rm backend python -m unittest discover -s tests -v
 cd frontend
 npm run build
 ```
 
-真实 DashScope 测试默认跳过；明确需要时设置 `RUN_DASHSCOPE_INTEGRATION=1` 和 `DASHSCOPE_API_KEY` 后单独运行。结构和数据检查方式见 [backend/tests/README.md](./backend/tests/README.md)，实现总结见 [DAY5_SUMMARY.md](./DAY5_SUMMARY.md) 与 [DAY6_SUMMARY.md](./DAY6_SUMMARY.md)。
+真实 Docker 沙箱验收默认跳过；Docker Desktop 正常运行后执行：
+
+```powershell
+docker-compose run --rm -e RUN_DOCKER_SANDBOX_INTEGRATION=1 sandbox-service `
+  python -m unittest tests.test_docker_integration -v
+```
+
+真实 DashScope 测试也默认跳过；明确需要时设置 `RUN_DASHSCOPE_INTEGRATION=1` 和 `DASHSCOPE_API_KEY` 后单独运行。结构和数据检查方式见 [backend/tests/README.md](./backend/tests/README.md)，实现总结见 [DAY5_SUMMARY.md](./DAY5_SUMMARY.md)、[DAY6_SUMMARY.md](./DAY6_SUMMARY.md) 与 [DAY7_SUMMARY.md](./DAY7_SUMMARY.md)。
 
 ## 本地运行后端
 

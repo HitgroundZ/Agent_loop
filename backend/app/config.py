@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     tool_webhook_allowed_hosts: str = ""
     tool_webhook_timeout_seconds: float = 10.0
     tool_webhook_max_response_bytes: int = 64 * 1024
+    sandbox_service_url: str = "http://sandbox-service:8080"
+    sandbox_service_token: str = "local-sandbox-token-change-me"
+    sandbox_request_timeout_seconds: float = 10.0
+    sandbox_allowed_env_keys: str = "LANG,LC_ALL,TZ,PYTHONUNBUFFERED"
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -67,6 +71,14 @@ class Settings(BaseSettings):
     @property
     def tool_webhook_allowed_host_list(self) -> list[str]:
         return [host.strip().lower() for host in self.tool_webhook_allowed_hosts.split(",") if host.strip()]
+
+    @property
+    def sandbox_allowed_env_key_set(self) -> set[str]:
+        return {
+            key.strip().upper()
+            for key in self.sandbox_allowed_env_keys.split(",")
+            if key.strip()
+        }
 
     # 加载文件属性
     @property

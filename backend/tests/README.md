@@ -1,4 +1,4 @@
-# Day 5 / Day 6 数据库与 Agent 测试
+# Day 5 / Day 6 / Day 7 数据库与 Agent 测试
 
 测试连接真实 PostgreSQL 和 Redis，不用 SQLite 替代 JSONB、行锁、唯一约束与跨会话缓存行为。外部模型、rerank 和 Webhook 在默认测试中使用 fake/mock。
 
@@ -21,6 +21,14 @@
 - `qwen3-rerank` 阈值过滤与未配置时 fail-closed。
 - Webhook 白名单、私网阻断、禁止重定向、超时、响应截断和敏感结果脱敏。
 
+`test_day7_sandbox.py`：
+
+- 沙箱工具只对具有 `sandbox.execute` 权限且原始消息明确要求执行的用户可见。
+- 安全命令结果完整写入 `tool_actions` 和 `agent_trace_events`。
+- sandbox service 的策略拒绝映射为 `blocked`，Docker/HTTP 故障映射为 `failed`。
+- 敏感环境变量在调用 sandbox service 前被阻断，值不会进入 action 返回或执行上下文。
+- Backend 只发送 `execution_id`、`argv`、白名单 `env` 和内部 Bearer token。
+
 `test_dashscope_optional.py`：
 
 - 默认跳过。
@@ -31,6 +39,12 @@
 ```powershell
 docker-compose build backend
 docker-compose run --rm backend python -m unittest discover -s tests -v
+```
+
+Sandbox service 自身的策略、Docker 参数、日志上限、超时 kill 和清理测试：
+
+```powershell
+docker-compose run --rm sandbox-service python -m unittest discover -s tests -v
 ```
 
 ## 生成可查看的长期记忆 demo

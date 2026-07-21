@@ -18,6 +18,7 @@ from app.models import AgentRun, ToolAction, ToolOutbox, new_id
 from app.services.documents import delete_document_resource
 from app.services.memory import MemoryService
 from app.services.retrieval import RetrievalFilters, RetrievalService
+from app.services.sandbox import SandboxClient, SandboxPolicyRejected
 
 
 RiskLevel = Literal["low", "medium", "high"]
@@ -26,7 +27,7 @@ ROLE_PERMISSIONS = {
     "user": {"knowledge.read", "memory.read", "memory.write"},
     "operator": {
         "knowledge.read", "memory.read", "memory.write",
-        "document.delete", "message.send", "external.call",
+        "document.delete", "message.send", "external.call", "sandbox.execute",
     },
     "approver": {"approval.read", "approval.decide"},
 }
@@ -178,6 +179,7 @@ class ToolExecutor:
         if tool_name == "enqueue_message":
             # 本阶段不允许模型选择投递渠道；只写通用 Outbox，由后续 worker 绑定真实渠道。
             arguments["channel"] = "generic"
+        execution_arguments = _safe_execution_arguments(self.settings, tool_name, arguments)
 
         action = ToolAction(
             id=new_id(),
@@ -195,7 +197,7 @@ class ToolExecutor:
                 "top_k": runtime.top_k,
                 "filters": _filters_payload(runtime.filters),
                 "citation_catalog": runtime.citation_catalog,
-                "raw_arguments": arguments,
+                "raw_arguments": execution_arguments,
             },
             permission=definition.permission,
             risk_level=definition.risk_level,
@@ -215,6 +217,8 @@ class ToolExecutor:
             if action.authorization_source not in definition.allowed_authorization_sources:
                 raise PolicyBlocked("工具授权来源不在注册表允许范围内")
             _validate_arguments(definition, arguments)
+            if tool_name == "execute_sandbox_command":
+                _validate_sandbox_arguments(self.settings, arguments)
             self.roles.require(runtime.run.user_id, definition.permission)
             if (
                 tool_name == "search_knowledge_base"
@@ -235,10 +239,13 @@ class ToolExecutor:
             runtime.db.refresh(action)
             return action
 
-        should_wait = definition.risk_level == "high" or (
-            definition.risk_level == "medium"
-            and (not intent.explicit_memory or not auto_approve)
-        )
+        if tool_name == "execute_sandbox_command":
+            should_wait = not auto_approve
+        else:
+            should_wait = definition.risk_level == "high" or (
+                definition.risk_level == "medium"
+                and (not intent.explicit_memory or not auto_approve)
+            )
         if should_wait:
             action.status = "pending"
             runtime.db.commit()
@@ -276,6 +283,20 @@ class ToolExecutor:
             db.refresh(action)
             try:
                 result = self._dispatch(runtime, action)
+            except SandboxPolicyRejected as exc:
+                db.rollback()
+                action = db.get(ToolAction, action.id) or action
+                action.status = "blocked"
+                action.error = str(exc)
+                action.result = {
+                    "blocked": True,
+                    "policy": {"decision": "denied", **exc.payload},
+                }
+                action.executed_at = _now()
+                db.add(action)
+                db.commit()
+                db.refresh(action)
+                return action
             except Exception as exc:
                 db.rollback()
                 action = db.get(ToolAction, action.id) or action
@@ -360,6 +381,12 @@ class ToolExecutor:
             return {"queued": True, "outbox_id": existing.id, "status": existing.status}
         if action.tool_name == "call_webhook":
             return _call_webhook(runtime.settings, action.id, arguments)
+        if action.tool_name == "execute_sandbox_command":
+            return SandboxClient(runtime.settings).execute(
+                execution_id=action.id,
+                argv=list(arguments.get("argv") or []),
+                env=dict(arguments.get("env") or {}),
+            )
         raise ValueError(f"工具未实现：{action.tool_name}")
 
     def _blocked_unknown(
@@ -425,6 +452,16 @@ def derive_intent_authorization(question: str) -> IntentAuthorization:
     if any(marker in lowered for marker in ("webhook", "回调", "调用接口", "http://", "https://")):
         allowed.add("call_webhook")
         evidence["call_webhook"] = _shorten(normalized, 240)
+    if any(
+        marker in lowered
+        for marker in (
+            "执行命令", "运行命令", "沙箱执行", "docker 沙箱", "docker sandbox",
+            "run command", "execute command", "用 python", "使用 python", "python 计算",
+            "运行 python", "执行 python", "run python", "argv:", "argv：",
+        )
+    ):
+        allowed.add("execute_sandbox_command")
+        evidence["execute_sandbox_command"] = _shorten(normalized, 240)
     return IntentAuthorization(
         question=normalized,
         explicit_memory=explicit_memory,
@@ -591,6 +628,28 @@ def _tool_definitions() -> list[ToolDefinition]:
             "external.call", "high", True, 10, 0,
             sensitive_fields=("payload",), sensitive_result_fields=("response_preview",),
         ),
+        ToolDefinition(
+            "execute_sandbox_command",
+            "在无网络、临时文件系统和严格资源限制的一次性 Docker 容器中执行结构化命令。不得使用 shell 字符串。",
+            {
+                **obj,
+                "properties": {
+                    "argv": {
+                        "type": "array", "minItems": 1, "maxItems": 64,
+                        "items": {"type": "string", "maxLength": 4096},
+                        "description": "可执行文件与参数数组，例如 ['python','-c','print(6*7)']。",
+                    },
+                    "env": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                        "description": "可选安全环境变量；API key、token、secret 一律禁止。",
+                    },
+                },
+                "required": ["argv"],
+            },
+            "sandbox.execute", "medium", True, 10, 0,
+            sensitive_fields=("env",),
+        ),
     ]
 
 
@@ -628,9 +687,14 @@ def _validate_schema_value(value: Any, schema: dict, *, path: str) -> None:
     elif expected == "array":
         if len(value) < int(schema.get("minItems") or 0):
             raise ValueError(f"工具参数 {path} 数量不足")
+        if schema.get("maxItems") is not None and len(value) > int(schema["maxItems"]):
+            raise ValueError(f"工具参数 {path} 数量超过上限")
         item_schema = schema.get("items") or {}
         for index, item in enumerate(value):
             _validate_schema_value(item, item_schema, path=f"{path}[{index}]")
+    elif expected == "string" and schema.get("maxLength") is not None:
+        if len(value) > int(schema["maxLength"]):
+            raise ValueError(f"工具参数 {path} 长度超过上限")
 
 
 def _validate_grounded_target(tool_name: str, arguments: dict, question: str) -> None:
@@ -646,6 +710,42 @@ def _validate_grounded_target(tool_name: str, arguments: dict, question: str) ->
         content = str(arguments.get("content") or "")
         if content and content != question and content not in question:
             raise PolicyBlocked("发送内容并非来自原始用户消息")
+
+
+def _validate_sandbox_arguments(settings: Settings, arguments: dict) -> None:
+    env = arguments.get("env") or {}
+    if not isinstance(env, dict):
+        raise ValueError("沙箱 env 必须是字符串映射")
+    sensitive = re.compile(r"(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|COOKIE)", re.I)
+    for key, value in env.items():
+        normalized = str(key).upper()
+        if sensitive.search(normalized):
+            raise PolicyBlocked(f"环境变量 {key} 可能包含凭证，禁止注入沙箱")
+        if normalized not in settings.sandbox_allowed_env_key_set:
+            raise PolicyBlocked(f"环境变量 {key} 不在沙箱白名单")
+        if not isinstance(value, str):
+            raise ValueError(f"环境变量 {key} 的值必须是字符串")
+
+
+def _safe_execution_arguments(settings: Settings, tool_name: str, arguments: dict) -> dict:
+    if tool_name != "execute_sandbox_command":
+        return arguments
+    safe = dict(arguments)
+    env = arguments.get("env") or {}
+    if not isinstance(env, dict):
+        safe["env"] = {}
+        return safe
+    sensitive = re.compile(r"(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|COOKIE)", re.I)
+    safe["env"] = {
+        str(key).upper(): value
+        for key, value in env.items()
+        if (
+            str(key).upper() in settings.sandbox_allowed_env_key_set
+            and not sensitive.search(str(key))
+            and isinstance(value, str)
+        )
+    }
+    return safe
 
 
 def _runtime_from_action(db: Session, settings: Settings, action: ToolAction) -> ToolRuntime:

@@ -34,6 +34,16 @@ function retrievalDecisionLabel(value) {
     pending: '待决策', skipped: '已跳过', executed: '已检索', failed: '检索失败'
   }[value] || value || '未记录'
 }
+
+function sandboxStatusLabel(value) {
+  return {
+    succeeded: '执行成功', nonzero_exit: '非零退出', timed_out: '已超时终止'
+  }[value] || value || '策略拒绝'
+}
+
+function isSandboxAction(action) {
+  return action.tool_name === 'execute_sandbox_command'
+}
 </script>
 
 <template>
@@ -194,7 +204,26 @@ function retrievalDecisionLabel(value) {
               </header>
               <p>{{ action.reason }}</p>
               <code>{{ action.arguments_summary }}</code>
-              <pre v-if="Object.keys(action.result || {}).length">{{ JSON.stringify(action.result, null, 2) }}</pre>
+              <section v-if="isSandboxAction(action) && Object.keys(action.result || {}).length" class="sandbox-result-card">
+                <div class="sandbox-result-facts">
+                  <span><small>结果</small><strong>{{ sandboxStatusLabel(action.result.execution_status) }}</strong></span>
+                  <span><small>Exit code</small><strong>{{ action.result.exit_code ?? '-' }}</strong></span>
+                  <span><small>耗时</small><strong>{{ formatDuration(action.result.duration_ms || 0) }}</strong></span>
+                  <span><small>清理</small><strong>{{ action.result.cleanup?.container_removed ? '已销毁' : (action.result.blocked ? '未创建' : '-') }}</strong></span>
+                </div>
+                <p class="sandbox-policy-line">
+                  Policy: {{ action.result.policy?.decision || '-' }} · {{ action.result.policy?.rule || '-' }}
+                </p>
+                <div v-if="action.result.stdout" class="sandbox-stream">
+                  <strong>stdout <span v-if="action.result.stdout_truncated">（已截断）</span></strong>
+                  <pre>{{ action.result.stdout }}</pre>
+                </div>
+                <div v-if="action.result.stderr" class="sandbox-stream error-stream">
+                  <strong>stderr <span v-if="action.result.stderr_truncated">（已截断）</span></strong>
+                  <pre>{{ action.result.stderr }}</pre>
+                </div>
+              </section>
+              <pre v-else-if="Object.keys(action.result || {}).length">{{ JSON.stringify(action.result, null, 2) }}</pre>
               <p v-if="action.error" class="error">{{ action.error }}</p>
             </article>
           </div>
