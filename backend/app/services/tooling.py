@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 import ipaddress
 import json
 import re
@@ -109,10 +110,15 @@ class RolePolicy:
         self.assignments = parsed if isinstance(parsed, dict) else {}
 
     def roles_for(self, principal_id: str) -> set[str]:
-        assigned = self.assignments.get(principal_id, [])
-        if isinstance(assigned, str):
-            assigned = [assigned]
-        return {*self.settings.tool_default_role_list, *(str(role) for role in assigned)}
+        roles = set(self.settings.tool_default_role_list)
+        for subject_pattern, assigned in self.assignments.items():
+            if not isinstance(subject_pattern, str) or not fnmatchcase(principal_id, subject_pattern):
+                continue
+            if isinstance(assigned, str):
+                assigned = [assigned]
+            if isinstance(assigned, list):
+                roles.update(str(role) for role in assigned)
+        return roles
 
     def permissions_for(self, principal_id: str) -> set[str]:
         permissions: set[str] = set()

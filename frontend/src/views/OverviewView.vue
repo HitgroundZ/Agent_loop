@@ -22,8 +22,8 @@ const workflows = [
   <div class="module-page overview-page">
     <section class="overview-hero">
       <div>
-        <p class="eyebrow">Agent Loop · Day 5 + Day 6</p>
-        <h2>把智能体、工具审批、记忆与知识库拆成清晰的工作台</h2>
+        <p class="eyebrow">Agent Loop · Day 10 Final</p>
+        <h2>从知识库检索到 Agent、审批、沙箱与 Trace 的完整工作台</h2>
         <p>当前用户 <strong>{{ agentUserId }}</strong> 的操作会在各模块间保持一致，切换页面不会丢失上下文。</p>
       </div>
       <button class="primary hero-action" @click="$emit('navigate', 'agent')">开始一次问答</button>

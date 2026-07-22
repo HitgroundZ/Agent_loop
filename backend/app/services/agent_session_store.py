@@ -1,5 +1,14 @@
 """
 Agent Loop 的 Redis 状态管理器
+用于保存：
+├── 最近对话
+├── 当前任务状态
+├── 临时执行计划
+├── 检索中间结果
+├── 人工审批状态
+├── 请求限流
+├── Token 配额
+└── Memory 检索缓存
 """
 from __future__ import annotations
 

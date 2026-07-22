@@ -1,6 +1,8 @@
-# Day 5 / Day 6 / Day 7 数据库与 Agent 测试
+# Day 5 / Day 6 / Day 7 / Day 10 数据库与 Agent 测试
 
 测试连接真实 PostgreSQL 和 Redis，不用 SQLite 替代 JSONB、行锁、唯一约束与跨会话缓存行为。外部模型、rerank 和 Webhook 在默认测试中使用 fake/mock。
+
+Day 10 的 `test_day10_hardening.py` 覆盖文档上传幂等、embedding 失败重置、知识库 subject 权限过滤、prompt injection、防虚假 citation 和专用 eval 主体匹配。它与 Day 6 的审批幂等、Day 7 的真实沙箱拒绝共同组成最终安全回归矩阵。
 
 ## 自动化案例
 

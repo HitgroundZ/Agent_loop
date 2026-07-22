@@ -1,242 +1,152 @@
-# Agent Loop 知识库 MVP
+# Agent Loop Knowledge Base
 
-当前版本已完成 Day 7 最终交付：在文档入库、混合检索、长短期记忆、LLM Function Calling、统一 Tool Registry、真实 rerank、风险策略和幂等人工审批之上，加入独立 Docker 命令沙箱。Agent 明确需要执行命令时，会创建无网络、只读、受资源限制的一次性容器，记录日志后立即销毁。
+Agent Loop 是一个可运行、可审批、可追踪的企业知识库 Agent MVP。Day 10 版本已经串联完整主流程：
 
-- FastAPI 后端：文档上传、哈希去重、MinIO 对象存储、chunk 查询、embedding job 重试、检索接口。
-- PostgreSQL：使用 `pgvector/pgvector:pg16`，保存 chunk 原文、`vector(1024)`、FTS `search_vector` 和 metadata filter 字段。
-- Worker：从 Redis 队列消费 embedding job，批量调用 `text-embedding-v4`。
-- Sandbox service：通过 Docker SDK 创建一次性容器执行结构化命令；只有该服务能够访问 Docker socket。
-- Vue 3 前端：总览、Agent、审批台、长期记忆、知识库和检索实验室六个独立模块。
+> 文档上传 → 解析与切片 → embedding / 检索 → Agent 回答 → 高风险人工审批 → Trace → Eval
 
-## 运行
+前端提供总览、智能体、审批台、长期记忆、知识库和检索实验室六个模块。后端使用 FastAPI、PostgreSQL/pgvector、Redis、MinIO、Qwen/DashScope 和独立 Docker Sandbox Service。
 
-复制示例环境变量文件：
+## 快速启动
+
+首次运行：
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-在 `.env` 中配置百炼 API Key：
+如需真实 LLM、embedding 和 rerank，在 `.env` 中配置：
 
 ```text
-DASHSCOPE_API_KEY=<your-rotated-local-key>
+DASHSCOPE_API_KEY=<your-key>
 ```
 
-启动完整服务：
+一条命令启动全部服务并等待健康检查通过：
 
 ```powershell
-docker-compose up -d --build
+docker compose up -d --build --wait
 ```
 
-如果使用新版 Docker Compose，也可以运行：
+访问：
+
+- 前端：<http://localhost:5173>
+- Backend health：<http://localhost:8000/api/health>
+- OpenAPI：<http://localhost:8000/docs>
+- MinIO Console：<http://localhost:9001>
+
+默认演示用户为 `demo-user`，服务端为其映射 `operator` 和 `approver`。真实部署必须替换默认数据库、MinIO 和 Sandbox token，并接入正式身份系统。
+
+## 核心能力
+
+### 知识库
+
+- 支持 PDF、DOCX、Markdown 和 HTML。
+- SHA-256 内容去重，`Idempotency-Key` 请求重放。
+- 原文件与解析文本存 MinIO；chunk、metadata、权限和向量存 PostgreSQL。
+- Redis + Worker 异步 embedding，最多 3 次重试，指数退避，可人工重置失败任务。
+- keyword、vector、hybrid RRF 和 Qwen rerank。
+- tenant、workspace、document、tag、时间和 subject 权限在 SQL 检索阶段过滤。
+
+### Agent 与记忆
+
+- LLM Function Calling + 确定性规则降级。
+- Redis 短期会话、限流和 token budget。
+- PostgreSQL 长期记忆，支持来源追踪、禁用、纠错和跨 session 召回。
+- 每次运行保存 plan、routing decision、tool action、citation、evaluation 和完整 trace。
+- 知识库路径没有本轮真实引用时，终态自动转为 `escalated_to_human`。
+
+### 工具、审批与沙箱
+
+- 统一 Tool Registry 定义 schema、permission、risk、timeout、retry 和敏感字段。
+- 角色只从服务端配置读取，模型或前端不能自行提升权限。
+- 文档、记忆和工具结果均为不可信数据，不能扩大原始用户意图授权。
+- 高风险操作必须人工审批；行锁、唯一约束、幂等记录和 Outbox 避免重复执行。
+- 命令执行只接受结构化 `argv`，由独立 Sandbox Service 创建一次性容器。
+- 沙箱默认无网络、只读根文件系统、非 root、drop all capabilities，并限制 CPU、内存、PID、输出和超时；结束后删除容器。
+
+## 常用 API
+
+| 领域 | API |
+|---|---|
+| 文档 | `POST /api/documents/upload` |
+| 文档 | `GET /api/documents` |
+| 文档 | `GET /api/documents/{id}/chunks` |
+| Embedding | `POST /api/documents/{id}/embedding-jobs` |
+| 检索 | `POST /api/retrieval/search` |
+| 检索 | `POST /api/retrieval/compare` |
+| Agent | `POST /api/agent/runs` |
+| Agent | `GET /api/agent/runs/{id}` |
+| Trace/审批 | `GET /api/tool-actions/{id}` |
+| 审批 | `POST /api/tool-actions/{id}/approve` |
+| 审批 | `POST /api/tool-actions/{id}/reject` |
+| 记忆 | `GET /api/memories?user_id=...` |
+
+上传、删除和审批建议始终携带 `Idempotency-Key`。审批接口还必须提供服务端已映射为 approver 的 `X-Principal-Id`。
+
+## 验收
+
+完整 Day 10 验收：
 
 ```powershell
-docker compose up -d --build
+powershell -ExecutionPolicy Bypass -File .\scripts\day10_verify.ps1
 ```
 
-访问地址：
+脚本依次执行：构建并健康启动、后端全量测试、沙箱单元测试、真实 Docker 隔离测试、前端生产构建和 live eval。
 
-- 前端：http://localhost:5173
-- 后端健康检查：http://localhost:8000/api/health
-- 后端接口文档：http://localhost:8000/docs
-- MinIO Console：http://localhost:9001
-
-默认 MinIO 登录信息来自 `.env.example`：
-
-- 用户名：`agent_loop`
-- 密码：`agent_loop_password`
-- bucket：`agent-loop-documents`
-
-## 存储与索引流程
-
-上传成功后：
-
-1. 后端计算 SHA-256，用于去重。
-2. 原始文件写入 MinIO：`documents/{source_hash}/source{ext}`。
-3. 解析后的全文写入 MinIO：`documents/{document_id}/versions/{version_id}/extracted.txt`。
-4. 数据库只保存对象 key、文本预览、metadata、chunk 文本和 embedding，不再保存 `documents.extracted_text`。
-5. 后端按标题/段落优先切 chunk，超长内容再按字符窗口切片。
-6. 后端创建幂等 embedding job 并推入 Redis 队列。
-7. worker 批量调用 `text-embedding-v4`，默认 `dimensions=1024`，写入 `document_chunks.embedding vector(1024)`。
-8. 检索接口可按 tenant、workspace、document、tags、时间和权限 subject 过滤 chunk。
-
-Day 1 的旧文档不会自动回填 chunk。若旧记录没有 MinIO object key 且没有 chunk，再次上传同 hash 文件时会替换为 Day 2 流程重新入库。
-
-## API
-
-主要接口：
-
-- `POST /api/documents/upload`
-- `GET /api/documents`
-- `GET /api/documents/{document_id}`
-- `GET /api/documents/{document_id}/chunks`
-- `POST /api/documents/{document_id}/embedding-jobs`
-- `DELETE /api/documents/{document_id}`
-- `POST /api/retrieval/search`
-- `POST /api/retrieval/compare`
-- `POST /api/agent/runs`
-- `GET /api/agent/runs/{run_id}`
-- `GET /api/agent/sessions/{session_id}`
-- `GET /api/tool-actions`
-- `GET /api/tool-actions/{action_id}`
-- `POST /api/tool-actions/{action_id}/approve`
-- `POST /api/tool-actions/{action_id}/reject`
-- `GET /api/memories?user_id={user_id}`
-- `GET /api/memories/messages?user_id={user_id}`
-- `PATCH /api/memories/{memory_id}`
-- `POST /api/memories/{memory_id}/corrections`
-- `DELETE /api/memories/{memory_id}`
-
-`chunks` 查询目前仍放在 `documents` router 内，因为它是文档的子资源；切片策略本身在 `backend/app/services/chunking.py`。
-
-检索请求示例：
-
-```json
-{
-  "query": "文档里怎么描述向量入库？",
-  "strategy": "hybrid",
-  "top_k": 8,
-  "filters": {
-    "tenant_id": "default",
-    "workspace_id": "default",
-    "tags": ["rag"],
-    "principal": "team-a"
-  }
-}
-```
-
-`strategy=keyword` 只依赖 PostgreSQL FTS/ILIKE；`strategy=vector` 和 `hybrid` 需要配置 `DASHSCOPE_API_KEY` 来生成查询向量。当前 Day 3 不生成回答，只返回引用；无可靠来源时 `need_human_handoff=true`。
-
-Agent 请求示例（模型自行判断是否检索）：
-
-```json
-{
-  "question": "请记住我是一名 AI 工程师，并且偏好简洁回答。",
-  "user_id": "demo-user",
-  "session_id": "session-a",
-  "strategy": "hybrid",
-  "retrieval_mode": "auto",
-  "top_k": 5,
-  "auto_approve": true
-}
-```
-
-`retrieval_mode` 可为 `auto | always | never`。`auto_approve` 不能绕过高风险审批。审批接口必须同时携带服务端映射为 approver 的 `X-Principal-Id` 和幂等键：
+单独运行：
 
 ```powershell
-$headers = @{
-  'X-Principal-Id' = 'demo-user'
-  'Idempotency-Key' = [guid]::NewGuid().ToString()
-}
-Invoke-RestMethod `
-  -Uri 'http://localhost:8000/api/tool-actions/<action_id>/approve' `
-  -Method Post `
-  -Headers $headers `
-  -ContentType 'application/json' `
-  -Body '{"reason":"已确认目标与影响"}'
+docker compose run --rm backend python -m unittest discover -s tests -v
+docker compose run --rm sandbox-service python -m unittest discover -s tests -v
+docker compose run --rm -e RUN_DOCKER_SANDBOX_INTEGRATION=1 sandbox-service python -m unittest tests.test_docker_integration -v
+docker compose run --rm frontend-check
+docker compose run --rm evals
 ```
 
-## 数据库迁移
+真实 DashScope 合约测试默认跳过；需要时设置 `RUN_DASHSCOPE_INTEGRATION=1` 后单独执行。确定性回归测试不依赖外部模型稳定性。
 
-项目使用 Alembic 管理数据库表结构。启动完整服务时，`migrate` 服务会先执行：
+## Day 10 安全回归矩阵
 
-```powershell
-docker-compose run --rm migrate
-```
+| 验收项 | 自动化证据 |
+|---|---|
+| 文档幂等 | `test_document_upload_replays_the_original_response_once` |
+| embedding 重试 | `test_failed_embedding_job_can_be_reset_once_for_retry` |
+| 权限过滤 | `test_retrieval_filters_chunks_by_permission_subject` |
+| prompt injection | `test_untrusted_document_instruction_cannot_authorize_side_effect` |
+| 防幻觉 | `test_unknown_citation_forces_human_handoff` |
+| 审批幂等 | `test_high_risk_send_is_idempotent_and_resumes` |
+| 沙箱危险命令 | `test_dangerous_command_is_rejected_before_create` |
 
-宿主机直接运行 Alembic 时：
-
-```powershell
-cd backend
-alembic upgrade head
-```
-
-当前迁移版本应为：
+## 项目结构
 
 ```text
-202607070001
+backend/          FastAPI、Agent Loop、RAG、工具、记忆、迁移和测试
+frontend/         Vue 3 前端，生产镜像提供已编译静态资源与 API 反向代理
+worker/           Redis embedding job worker
+sandbox_service/  Docker 一次性命令沙箱与隔离测试
+evals/            live eval 数据集与 runner
+demo/             5 分钟演示文档
+docs/             架构图、ER 图、状态机和讲稿
+scripts/          Day 10 一键验收脚本
+infra/            基础设施预留目录
 ```
 
-本地角色、模型、rerank 和 Webhook 安全边界均通过 `.env` 配置。`TOOL_ROLE_ASSIGNMENTS` 只在服务端读取；不要把角色或权限放入 Agent 请求体。
+## 设计文档与讲解材料
 
-## Day 7 Docker 沙箱
+- [架构图、数据库关系图、状态机与完整时序](docs/ARCHITECTURE.md)
+- [5 分钟 Demo 讲解稿](docs/DEMO_5_MIN.md)
+- [2 分钟系统设计口述稿](docs/SYSTEM_DESIGN_2_MIN.md)
+- [Day 10 完整性审查与最终总结](DAY10_SUMMARY.md)
+- [Day 7 Docker 沙箱实现](DAY7_SUMMARY.md)
+- [Day 6 工具与审批实现](DAY6_SUMMARY.md)
+- [Day 5 长短期记忆实现](DAY5_SUMMARY.md)
 
-沙箱只执行 Agent 提出的单次命令，不运行整个 RAG Agent，也不挂载项目代码或宿主目录。首版工具使用结构化 `argv`，例如：
+## 当前边界
 
-```text
-请在 Docker 沙箱执行命令 argv: ["python","-c","print(6*7)"]
-```
+Day 10 已达到“单机一键启动、浏览器完成主流程、回归测试稳定、可用于面试演示”的目标，但不等同于生产就绪：
 
-固定安全边界包括：无网络、非 root、只读根目录、临时 `/workspace` 与 `/tmp`、0.5 CPU、128 MiB 内存、64 PID、5 秒超时、命令 allowlist/denylist 和环境变量白名单。`DASHSCOPE_API_KEY`、token、secret 和 Docker socket 都不会进入执行容器。
+- 身份认证仍是演示级 header + 服务端角色映射，未接 OIDC/SSO。
+- Outbox 只落通用消息记录，未接真实邮件、IM 或 Webhook 消费 Worker。
+- 尚未提供 Prometheus/OpenTelemetry、集中日志、告警和 SLO。
+- PostgreSQL、Redis、MinIO 和 Worker 仍是单实例，未做 HA、备份恢复演练和密钥托管。
 
-详细架构、执行时序、安全参数和故障排查见 [DAY7_SUMMARY.md](./DAY7_SUMMARY.md)。
-
-## Day 5 / Day 6 / Day 7 验收测试
-
-```powershell
-docker-compose build sandbox-service backend
-docker-compose run --rm sandbox-service python -m unittest discover -s tests -v
-docker-compose run --rm backend python -m unittest discover -s tests -v
-cd frontend
-npm run build
-```
-
-真实 Docker 沙箱验收默认跳过；Docker Desktop 正常运行后执行：
-
-```powershell
-docker-compose run --rm -e RUN_DOCKER_SANDBOX_INTEGRATION=1 sandbox-service `
-  python -m unittest tests.test_docker_integration -v
-```
-
-真实 DashScope 测试也默认跳过；明确需要时设置 `RUN_DASHSCOPE_INTEGRATION=1` 和 `DASHSCOPE_API_KEY` 后单独运行。结构和数据检查方式见 [backend/tests/README.md](./backend/tests/README.md)，实现总结见 [DAY5_SUMMARY.md](./DAY5_SUMMARY.md)、[DAY6_SUMMARY.md](./DAY6_SUMMARY.md) 与 [DAY7_SUMMARY.md](./DAY7_SUMMARY.md)。
-
-## 本地运行后端
-
-后端直接跑在宿主机时，默认连接 `127.0.0.1:5432` 的 PostgreSQL。MinIO 也需要使用宿主机可访问地址，例如：
-
-```text
-MINIO_ENDPOINT=127.0.0.1:9000
-```
-
-安装并启动：
-
-```powershell
-cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
-
-## Day 2/Day 3 验收
-
-分别上传以下类型的文件：
-
-- PDF
-- DOCX
-- Markdown
-- HTML
-
-预期结果：
-
-- 文档列表能显示解析、切片、向量化状态。
-- 重复上传会通过 SHA-256 哈希识别。
-- 选中文档后，可以查看文本预览、解析 metadata、chunk 文本、chunk metadata 和 embedding 状态。
-- `document_chunks` 表有 chunk 数据，向量化成功后 `embedding` 不为空。
-- 删除文档后，对应版本、chunk、embedding job 和 MinIO 对象被清理。
-- 使用上传表单传入 tenant/workspace/tags/permissions 后，document 和 chunk 都会带上相同过滤字段。
-- 在前端检索区可分别运行向量检索、关键词检索、混合检索，也可以点击对比同时查看三组结果。
-- 检索结果包含文档名、切片编号、页码/标题、得分、摘要和元数据；无结果时显示“需人工处理”。
-
-如果没有配置 `DASHSCOPE_API_KEY`，worker 会保留任务重试状态，并在日志中提示“尚未配置 DASHSCOPE_API_KEY”。
-
-## Windows 下的 Docker 说明
-
-如果执行 `docker info` 时出现 `permission denied while trying to connect to ... docker_engine`，先启动 Docker Desktop，然后重新打开终端。
-
-如果宿主机已经安装 PostgreSQL，并且占用了 `5432` 端口，需要先用管理员 PowerShell 停止并禁用本机 PostgreSQL 服务，再启动本项目：
-
-```powershell
-Stop-Service postgresql-x64-18
-Set-Service postgresql-x64-18 -StartupType Disabled
-```
+这些边界不影响当前 Day 10 演示验收，但应作为生产化的下一阶段工作。

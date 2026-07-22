@@ -53,7 +53,7 @@ services:
   sandbox-service:
     build:
       context: ./sandbox_service
-    image: agent-loop-sandbox-service:day7
+    image: agent-loop-sandbox-service:day10
     environment:
       SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-local-sandbox-token-change-me}
       SANDBOX_RUNTIME_IMAGE: ${SANDBOX_RUNTIME_IMAGE:-python:3.13-slim}
@@ -120,7 +120,7 @@ services:
       RERANK_MIN_SCORE: ${RERANK_MIN_SCORE:-0.35}
       RERANK_TIMEOUT_SECONDS: ${RERANK_TIMEOUT_SECONDS:-15}
       TOOL_DEFAULT_ROLES: ${TOOL_DEFAULT_ROLES:-user}
-      TOOL_ROLE_ASSIGNMENTS: '${TOOL_ROLE_ASSIGNMENTS:-{"demo-user":["operator","approver"]}}'
+      TOOL_ROLE_ASSIGNMENTS: '${TOOL_ROLE_ASSIGNMENTS:-{"demo-user":["operator","approver"],"day10-eval-*":["operator","approver"]}}'
       TOOL_WEBHOOK_ALLOWED_HOSTS: ${TOOL_WEBHOOK_ALLOWED_HOSTS:-}
       TOOL_WEBHOOK_TIMEOUT_SECONDS: ${TOOL_WEBHOOK_TIMEOUT_SECONDS:-10}
       TOOL_WEBHOOK_MAX_RESPONSE_BYTES: ${TOOL_WEBHOOK_MAX_RESPONSE_BYTES:-65536}
@@ -134,7 +134,6 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/app:/app/app
       - backend_storage:/app/storage
     depends_on:
       migrate:
@@ -145,6 +144,12 @@ services:
         condition: service_completed_successfully
       sandbox-service:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   migrate:
     build:
@@ -152,10 +157,6 @@ services:
     command: ["alembic", "upgrade", "head"]
     environment:
       DATABASE_URL: postgresql+psycopg://agent_loop:agent_loop@postgres:5432/agent_loop
-    volumes:
-      - ./backend/app:/app/app
-      - ./backend/alembic:/app/alembic
-      - ./backend/alembic.ini:/app/alembic.ini:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -187,13 +188,33 @@ services:
       BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
     ports:
       - "5173:5173"
-    volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/index.html:/app/index.html
-      - ./frontend/vite.config.js:/app/vite.config.js
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5173/healthz').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  frontend-check:
+    profiles: ["test"]
+    build:
+      context: ./frontend
+      target: build
+    command: ["npm", "run", "build"]
+    network_mode: none
+
+  evals:
+    profiles: ["test"]
+    image: python:3.13-slim
+    command: ["python", "/evals/run_evals.py", "--base-url", "http://backend:8000"]
+    volumes:
+      - ./evals:/evals:ro
+    depends_on:
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:

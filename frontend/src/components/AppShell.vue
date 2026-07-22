@@ -73,7 +73,7 @@ function navigate(moduleId) {
         <span class="service-indicator" :class="workspace.health.value">
           <i></i>{{ workspace.health.value === 'ok' ? '服务正常' : '服务异常' }}
         </span>
-        <small>Day 5 + 6 · Tools</small>
+        <small>Day 10 · Integrated</small>
       </div>
     </aside>
 

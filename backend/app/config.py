@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     chunk_max_chars: int = 1800
     chunk_overlap_chars: int = 200
     tool_default_roles: str = "user"
-    tool_role_assignments: str = '{"demo-user":["operator","approver"]}'
+    tool_role_assignments: str = '{"demo-user":["operator","approver"],"day10-eval-*":["operator","approver"]}'
     tool_webhook_allowed_hosts: str = ""
     tool_webhook_timeout_seconds: float = 10.0
     tool_webhook_max_response_bytes: int = 64 * 1024

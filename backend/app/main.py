@@ -12,7 +12,7 @@ from app.routers.tool_actions import router as tool_actions_router
 
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name, version="0.1.0")
+app = FastAPI(title=settings.app_name, version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,4 +34,4 @@ app.include_router(tool_actions_router)
 def health() -> dict:
     with SessionLocal() as db:
         db.execute(text("SELECT 1"))
-    return {"status": "ok", "service": "backend"}
+    return {"status": "ok", "service": "backend", "version": "1.0.0"}
