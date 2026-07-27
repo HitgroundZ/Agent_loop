@@ -1,0 +1,3 @@
+[2026-07-22T07:52:45.594881400Z][Docker Desktop.exe] launching  C:\Program Files\Docker\Docker\resources\com.docker.backend.exe
+[2026-07-22T07:52:46.425849200Z][Docker Desktop.exe.ipc] 9a27a4e1-docker-desktop -> \\.\pipe\dockerBackendApiServer BackendAPI
+[2026-07-22T11:27:58.128688800Z][Docker Desktop.exe] backend process exited

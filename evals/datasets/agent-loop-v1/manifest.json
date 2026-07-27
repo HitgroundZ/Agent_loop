@@ -1,0 +1,14 @@
+{
+  "id": "agent-loop-v1",
+  "name": "Agent Loop 上线手册 Smoke",
+  "version": "1.0.0",
+  "description": "基于 demo/day10-knowledge.md 的中文 RAG 冒烟黄金集；正式基准请扩充并人工复核。",
+  "cases_file": "cases.jsonl",
+  "case_count": 10,
+  "default_top_k": 5,
+  "tags": ["smoke", "zh-CN", "agent-loop"],
+  "corpus": {
+    "files": ["demo/day10-knowledge.md"],
+    "source_hashes": ["d600ab019c44b2c06b1d0c32b1a61eff0018b7323be47375fdcb9b370e094da3"]
+  }
+}

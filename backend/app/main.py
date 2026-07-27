@@ -6,6 +6,7 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.routers.agent import router as agent_router
 from app.routers.documents import router as documents_router
+from app.routers.evaluations import router as evaluations_router
 from app.routers.memories import router as memories_router
 from app.routers.retrieval import router as retrieval_router
 from app.routers.tool_actions import router as tool_actions_router
@@ -28,6 +29,7 @@ app.include_router(retrieval_router)
 app.include_router(agent_router)
 app.include_router(memories_router)
 app.include_router(tool_actions_router)
+app.include_router(evaluations_router)
 
 # 健康状态测试路由
 @app.get("/api/health")

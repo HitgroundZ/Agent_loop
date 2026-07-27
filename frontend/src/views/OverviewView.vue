@@ -14,7 +14,8 @@ const workflows = [
   { id: 'approval', step: '02', title: '处理工具审批', description: '核对高风险 action、授权证据与关联 trace。' },
   { id: 'memory', step: '03', title: '治理长期记忆', description: '核对来源、纠正事实，或禁用不应进入上下文的记忆。' },
   { id: 'knowledge', step: '04', title: '维护知识库', description: '上传资料，检查解析、切片与向量化状态。' },
-  { id: 'retrieval', step: '05', title: '验证检索策略', description: '独立比较向量、关键词和混合检索效果。' }
+  { id: 'retrieval', step: '05', title: '验证检索策略', description: '独立比较向量、关键词和混合检索效果。' },
+  { id: 'evaluation', step: '06', title: '运行质量评测', description: '通过黄金集量化检索命中率、忠实度和上下文质量。' }
 ]
 </script>
 

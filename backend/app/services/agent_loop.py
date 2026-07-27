@@ -753,7 +753,8 @@ def _document_citation(key: str, item: dict) -> dict:
     return {
         "id": key, "label": f"[{key}]", "document_id": item.get("document_id"),
         "document_name": item.get("document_name") or "Untitled document",
-        "chunk_id": item.get("chunk_id"), "chunk_index": item.get("chunk_index"),
+        "chunk_id": item.get("chunk_id"), "context_id": item.get("context_id"),
+        "chunk_index": item.get("chunk_index"),
         "page": item.get("page"), "heading": item.get("heading"),
         "score": item.get("score"), "snippet": item.get("snippet") or "",
         "metadata": item.get("metadata") or {},

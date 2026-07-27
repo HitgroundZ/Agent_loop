@@ -19,3 +19,9 @@ python .\evals\run_evals.py --base-url http://localhost:8000
 退出码为 `0` 表示全部通过，`1` 表示至少一个 case 未满足断言。用例定义见 `cases.json`。
 
 说明：真实模型不可用时，Agent 会进入规则降级路径；这些 case 仍然可运行。知识库答案质量和 rerank 效果应在 5 分钟人工 demo 中结合真实文档检查。
+
+## Ragas 黄金集评测
+
+`datasets/agent-loop-v1` 是基于 `demo/day10-knowledge.md` 的 10 条中文 smoke 黄金集。先将该文档上传并完成切片，随后可在前端“评测中心”发起异步评测。
+
+它与上述 live eval 的用途不同：live eval 验证流程断言，黄金集评测量化 Hit@K、faithfulness、answer relevancy、context precision 和 context recall。完整字段、评分口径和扩充方式见 `docs/EVALUATION.md`。

@@ -115,7 +115,7 @@ class Day5MemoryIntegrationTest(unittest.TestCase):
 
         with Session(self.engine) as db:
             revision = db.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        self.assertEqual("202607070001", revision)
+        self.assertEqual("202607220001", revision)
 
     def test_profile_fact_does_not_treat_a_question_as_a_fact(self) -> None:
         self.assertTrue(_looks_like_profile_fact("请记住我喜欢手冲咖啡。"))

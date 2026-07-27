@@ -94,6 +94,7 @@ services:
       DATABASE_URL: postgresql+psycopg://agent_loop:agent_loop@postgres:5432/agent_loop
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       REDIS_EMBEDDING_QUEUE: ${REDIS_EMBEDDING_QUEUE:-agent_loop:embedding_jobs}
+      REDIS_EVALUATION_QUEUE: ${REDIS_EVALUATION_QUEUE:-agent_loop:evaluation_jobs}
       AGENT_SESSION_MESSAGE_LIMIT: ${AGENT_SESSION_MESSAGE_LIMIT:-12}
       AGENT_SESSION_TTL_SECONDS: ${AGENT_SESSION_TTL_SECONDS:-86400}
       AGENT_RATE_LIMIT_REQUESTS: ${AGENT_RATE_LIMIT_REQUESTS:-60}
@@ -131,10 +132,17 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v4}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
       EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-10}
+      EVAL_DATASET_DIR: ${EVAL_DATASET_DIR:-/evals/datasets}
+      EVAL_LLM_MODEL: ${EVAL_LLM_MODEL:-qwen3.7-max}
+      EVAL_EMBEDDING_MODEL: ${EVAL_EMBEDDING_MODEL:-text-embedding-v4}
+      EVAL_MAX_CONCURRENCY: ${EVAL_MAX_CONCURRENCY:-2}
+      EVAL_CASE_TIMEOUT_SECONDS: ${EVAL_CASE_TIMEOUT_SECONDS:-120}
+      EVAL_MAX_RETRIES: ${EVAL_MAX_RETRIES:-2}
     ports:
       - "8000:8000"
     volumes:
       - backend_storage:/app/storage
+      - ./evals:/evals:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -180,6 +188,32 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_started
+
+  evaluation-worker:
+    build:
+      context: ./evaluation_worker
+    environment:
+      DATABASE_URL: postgresql+psycopg://agent_loop:agent_loop@postgres:5432/agent_loop
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_EVALUATION_QUEUE: ${REDIS_EVALUATION_QUEUE:-agent_loop:evaluation_jobs}
+      BACKEND_URL: http://backend:8000
+      EVAL_DATASET_DIR: ${EVAL_DATASET_DIR:-/evals/datasets}
+      EVAL_LLM_MODEL: ${EVAL_LLM_MODEL:-qwen3.7-max}
+      EVAL_EMBEDDING_MODEL: ${EVAL_EMBEDDING_MODEL:-text-embedding-v4}
+      EVAL_MAX_CONCURRENCY: ${EVAL_MAX_CONCURRENCY:-2}
+      EVAL_CASE_TIMEOUT_SECONDS: ${EVAL_CASE_TIMEOUT_SECONDS:-120}
+      EVAL_MAX_RETRIES: ${EVAL_MAX_RETRIES:-2}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+    volumes:
+      - ./evals:/evals:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      backend:
+        condition: service_healthy
 
   frontend:
     build:

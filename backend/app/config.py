@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://agent_loop:agent_loop@127.0.0.1:5432/agent_loop"      #链接容器里的postgre数据库
     redis_url: str = "redis://redis:6379/0"
     redis_embedding_queue: str = "agent_loop:embedding_jobs"
+    redis_evaluation_queue: str = "agent_loop:evaluation_jobs"
     agent_session_message_limit: int = 12
     agent_session_ttl_seconds: int = 24 * 60 * 60
     agent_rate_limit_requests: int = 60
@@ -41,6 +42,12 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-v4"
     embedding_dim: int = 1024
     embedding_batch_size: int = 10
+    eval_dataset_dir: str = "../evals/datasets"
+    eval_llm_model: str = "qwen3.7-max"
+    eval_embedding_model: str = "text-embedding-v4"
+    eval_max_concurrency: int = 2
+    eval_case_timeout_seconds: float = 120.0
+    eval_max_retries: int = 2
     chunk_max_chars: int = 1800
     chunk_overlap_chars: int = 200
     tool_default_roles: str = "user"

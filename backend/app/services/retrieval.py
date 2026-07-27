@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from hashlib import sha256
 import re
 from typing import Any, Literal
 
@@ -431,6 +432,7 @@ def _candidate(row: Any, query: str, source: str, rank: int) -> dict:
         "document_id": row["document_id"],
         "document_name": row["document_name"],
         "chunk_id": row["chunk_id"],
+        "context_id": context_id_for_text(text_value),
         "chunk_index": row["chunk_index"],
         "page": row["page"],
         "heading": row["heading"],
@@ -447,6 +449,12 @@ def _candidate(row: Any, query: str, source: str, rank: int) -> dict:
         "source_scores": {source: score},
         "distance": float(row["distance"]) if row["distance"] is not None else None,
     }
+
+
+def context_id_for_text(text_value: str) -> str:
+    """返回跨重复入库稳定的内容标识；切片内容变化时标识随之变化。"""
+    normalized = re.sub(r"\s+", " ", text_value).strip()
+    return f"sha256:{sha256(normalized.encode('utf-8')).hexdigest()}"
 
 
 def _snippet(text_value: str, query: str, size: int = 280) -> str:

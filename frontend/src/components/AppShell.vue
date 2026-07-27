@@ -4,6 +4,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { provideWorkspaceContext } from '../composables/workspaceContext'
 import AgentView from '../views/AgentView.vue'
 import ApprovalView from '../views/ApprovalView.vue'
+import EvaluationView from '../views/EvaluationView.vue'
 import KnowledgeView from '../views/KnowledgeView.vue'
 import MemoryView from '../views/MemoryView.vue'
 import OverviewView from '../views/OverviewView.vue'
@@ -17,7 +18,8 @@ const modules = [
   { id: 'approval', label: '审批台', shortLabel: '审批', glyph: '✓', component: ApprovalView, description: '审查高风险工具调用并安全续跑' },
   { id: 'memory', label: '长期记忆', shortLabel: '记忆', glyph: '◇', component: MemoryView, description: '查看、禁用、纠错与追溯用户记忆' },
   { id: 'knowledge', label: '知识库', shortLabel: '文档', glyph: '▤', component: KnowledgeView, description: '上传文档并管理切片和向量状态' },
-  { id: 'retrieval', label: '检索实验室', shortLabel: '检索', glyph: '⌕', component: RetrievalView, description: '测试向量、关键词与混合检索' }
+  { id: 'retrieval', label: '检索实验室', shortLabel: '检索', glyph: '⌕', component: RetrievalView, description: '测试向量、关键词与混合检索' },
+  { id: 'evaluation', label: '评测中心', shortLabel: '评测', glyph: '◒', component: EvaluationView, description: '量化命中率、忠实度与上下文质量' }
 ]
 
 const currentModuleId = ref(readModuleFromHash())

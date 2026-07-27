@@ -184,6 +184,71 @@ class AgentRun(Base):
     )
 
 
+class EvaluationRun(Base):
+    """一次可复现的 RAG 黄金集评测批次。"""
+
+    __tablename__ = "evaluation_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    dataset_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    dataset_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
+    strategy: Mapped[str] = mapped_column(String(20), nullable=False, default="hybrid", index=True)
+    top_k: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    judge_model: Mapped[str] = mapped_column(String(120), nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(120), nullable=False)
+    config_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    metrics: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    coverage: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    total_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    case_results: Mapped[list["EvaluationCaseResult"]] = relationship(
+        back_populates="evaluation_run",
+        cascade="all, delete-orphan",
+        order_by="EvaluationCaseResult.created_at",
+    )
+
+
+class EvaluationCaseResult(Base):
+    """评测批次中的单个案例、证据快照和指标结果。"""
+
+    __tablename__ = "evaluation_case_results"
+    __table_args__ = (
+        UniqueConstraint("evaluation_run_id", "case_id", name="uq_evaluation_case_results_run_case"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    evaluation_run_id: Mapped[str] = mapped_column(
+        ForeignKey("evaluation_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    case_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    agent_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed", index=True)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    reference_answer: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    reference_contexts: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
+    retrieved_contexts: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
+    scores: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    reasons: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    hit_at_k: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    evaluation_run: Mapped[EvaluationRun] = relationship(back_populates="case_results")
+
+
 class AgentTraceEvent(Base):
     __tablename__ = "agent_trace_events"
     __table_args__ = (

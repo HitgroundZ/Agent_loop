@@ -22,6 +22,11 @@ flowchart LR
     W["Embedding Worker"] -->|consume| R
     W -->|vector write| PG
     W -->|DashScope embedding| LLM["Qwen / DashScope"]
+    API -->|evaluation job| R
+    EW["Ragas Evaluation Worker"] -->|consume| R
+    EW -->|真实 Agent HTTP| API
+    EW -->|score / reason| PG
+    EW -->|judge + embedding| LLM
     RET -->|embedding + rerank| LLM
     AL -->|Function Calling| LLM
 
